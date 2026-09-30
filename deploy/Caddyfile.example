@@ -1,0 +1,4 @@
+# Replace with your server domain.
+portal.example.com {
+    reverse_proxy 127.0.0.1:3000
+}

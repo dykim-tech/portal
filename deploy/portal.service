@@ -1,0 +1,20 @@
+[Unit]
+Description=DYKIM Personal Portal
+After=network.target
+[Service]
+Type=simple
+User=portal
+Group=portal
+WorkingDirectory=/opt/portal
+EnvironmentFile=/opt/portal/.env
+ExecStart=/usr/bin/node /opt/portal/server/index.mjs
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/portal/data /opt/portal/backups
+UMask=0077
+[Install]
+WantedBy=multi-user.target

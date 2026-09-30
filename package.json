@@ -1,0 +1,22 @@
+{
+  "name": "dykim-personal-portal",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.13.0 <25"
+  },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env server/index.mjs",
+    "dev": "node --watch --env-file-if-exists=.env server/index.mjs",
+    "test": "node --test test/*.test.mjs",
+    "check": "node --check server/app.mjs && node --check server/db.mjs && node --check server/features.mjs && node --check public/app.js",
+    "backup": "node --env-file-if-exists=.env server/backup.mjs"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "helmet": "^8.1.0",
+    "multer": "^2.0.2",
+    "pdfjs-dist": "^6.3.289"
+  }
+}
