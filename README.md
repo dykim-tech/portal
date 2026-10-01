@@ -2,7 +2,7 @@
 
 개인 PC 또는 사내 서버에서 운영하는 설치·자료·자산 통합 포털입니다. Node.js 24와 SQLite로 동작합니다.
 
-[포털 설계도: 구조·데이터 저장 위치·GitHub 역할](docs/PORTAL_DESIGN.md)
+[포털 설계도: 구조·데이터 저장 위치·GitHub 역할](docs/PORTAL_DESIGN.md) · [기동 및 장애 대응 절차](docs/OPERATIONS.md)
 
 ## 메뉴와 기능
 
