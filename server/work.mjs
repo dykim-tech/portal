@@ -11,7 +11,7 @@ const id = value => {
   return Number(value);
 };
 const date = value => {
-  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value) || new Date(value).toISOString().slice(0, 10) !== value) throw fail(400, '업무 날짜를 확인해 주세요.');
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value) || !Number.isFinite(Date.parse(value)) || new Date(value).toISOString().slice(0, 10) !== value) throw fail(400, '업무 날짜를 확인해 주세요.');
   return value;
 };
 const statuses = new Set(['planned', 'progress', 'done', 'hold']);
