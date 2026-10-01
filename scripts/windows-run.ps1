@@ -7,5 +7,13 @@ if (-not (Test-Path -LiteralPath $dataDir)) {
 }
 $logPath = Join-Path $dataDir 'server.log'
 $node = (Get-Command node.exe -ErrorAction Stop).Source
-& $node '--env-file-if-exists=.env' 'server/index.mjs' *>> $logPath
+$nodeArgs = @()
+if (Test-Path -LiteralPath (Join-Path $portalRoot '.env')) {
+    $nodeArgs += '--env-file=.env'
+}
+$nodeArgs += 'server/index.mjs'
+# Windows PowerShell 5.1 treats native stderr as an error record. Let Node run
+# and use its exit code, while preserving both output streams in the log.
+$ErrorActionPreference = 'Continue'
+& $node @nodeArgs *>> $logPath
 exit $LASTEXITCODE
