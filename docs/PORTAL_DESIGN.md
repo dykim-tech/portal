@@ -1,6 +1,6 @@
 # DYKIM PORTAL 설계도
 
-> 기준: 2026-10-01, GitHub main의 설치관리 표 개편 버전. 이 문서는 현재 구현된 동작을 설명합니다.
+> 기준: 2026-10-02, GitHub `main`에 반영된 기능. 현재 PC에는 `git pull --ff-only`과 포털 재시작 후 적용됩니다. 계획 중인 기능은 따로 표시합니다.
 
 ## 1. 목적과 범위
 
@@ -20,7 +20,7 @@ flowchart LR
 
 - 화면: public/app.js, public/extras.js, public/styles.css. 별도 프런트엔드 빌드 없이 Express가 파일을 제공합니다.
 - API·인증: server/app.mjs. 설치·자료는 server/features.mjs, 분류는 server/categories.mjs, 고객·업무일지는 server/work.mjs, 리포트는 server/reports.mjs가 담당합니다.
-- 저장소: server/db.mjs가 Node.js 내장 SQLite를 열고 기본 테이블을 만듭니다. 첨부파일도 별도 파일 폴더가 아니라 SQLite의 BLOB 데이터로 저장합니다.
+- 저장소: server/db.mjs가 Node.js 내장 SQLite를 열고 기본 테이블을 만듭니다. 첨부파일도 별도 파일 폴더가 아니라 SQLite의 BLOB 데이터로 저장합니다. Windows 기본 운영에 별도 SQLite 프로그램이나 Docker 설치는 필요하지 않습니다.
 - 실행: server/index.mjs가 HTTP 서버와 1분 간격 기한 확인을 시작합니다. Windows 자동 실행에서는 server/windows-start.mjs가 로그를 파일에 기록하며 index.mjs를 불러옵니다.
 
 ## 3. 데이터 저장 위치
@@ -80,7 +80,9 @@ erDiagram
 | 사용자 관리 | 관리자가 계정과 권한 관리 |
 | 설정 | 일반/다크 모드 및 비밀번호 변경 |
 
-설치 표의 제품명은 DB의 name, 세부내용은 product_version 필드에 대응합니다. 기존 기록은 삭제하지 않고 수량 기본값 1, 빈 설치종료일·담당자를 추가하는 방식으로 확장했습니다. 기존 상태·설치 위치는 상세 화면에서 계속 관리합니다. 과거 설치 분류는 데이터에 보존하지만 화면에서 선택·표시하지 않습니다.
+설치 표는 **구분·고객사·제품명·세부내용·수량·설치시작일·설치종료일·담당자·설치엔지니어·비고**의 10개 열로 표시합니다. 구분은 화면의 행 번호이며, 제품명은 DB의 `name`, 세부내용은 `product_version` 필드에 대응합니다. 기존 기록은 삭제하지 않고 수량 기본값 1, 빈 설치종료일·담당자를 추가하는 방식으로 확장했습니다. 상태와 설치 위치는 상세 화면에서 계속 관리합니다. 과거 설치 분류는 데이터에 보존하지만 설치관리 화면에서 선택·표시하지 않습니다.
+
+설치 정보를 새로 저장할 때는 **저장 중** 상태를 보여 주고, 저장이 끝나면 첨부자료를 추가할 수 있는 상세 창에 완료 안내를 표시합니다. 기존 기록 수정이 끝나면 상세 창을 닫고 목록 및 완료 안내를 보여 줍니다. 저장 요청이 실패하면 오류를 저장 버튼 근처에 표시합니다. 따라서 저장 여부를 확인하기 위해 같은 버튼을 반복해서 누를 필요가 없습니다.
 
 ## 6. 권한과 보안
 
@@ -99,13 +101,13 @@ erDiagram
 
 ## 8. Windows 실행과 백업
 
-scripts/windows-install.ps1은 작업 스케줄러에 DYKIM Personal Portal 작업을 등록합니다. Windows 로그인 시 현재 사용자 권한으로 Node.js를 직접 실행하므로 명령 창을 열어 둘 필요가 없습니다. 작업은 프로젝트 폴더를 작업 디렉터리로 사용하며, 실행 기록은 data/server.log에 남깁니다.
+`scripts/windows-install.ps1`은 작업 스케줄러에 `DYKIM Personal Portal` 작업을 등록합니다. Windows 로그인 시 현재 사용자 권한으로 Node.js를 직접 실행하므로 평상시에는 명령 창을 열어 둘 필요가 없습니다. 작업은 프로젝트 폴더를 작업 디렉터리로 사용하며, 실행 기록은 `data/server.log`에 남깁니다. PC가 꺼져 있거나 해당 Windows 사용자가 로그인하지 않으면 기본 로컬 서버에 접속할 수 없습니다. 기동·재시작·포트 충돌·로그 확인 절차는 [운영 및 장애 대응 문서](OPERATIONS.md)에 있습니다.
 
 프로젝트 폴더에서 npm run backup을 실행하면 backups/에 portal-날짜.sqlite 형식의 온라인 백업이 생성됩니다. 이 백업에는 계정 정보와 업로드 파일도 포함됩니다. 백업 생성은 현재 수동이며 자동 일정과 외부 보관은 별도로 구성해야 합니다. 복구할 때는 서버를 완전히 중지하고 기존 data 폴더를 별도 보관한 뒤, 선택한 백업을 새 data 폴더의 portal.sqlite로 배치합니다. 과거 WAL/SHM 파일을 복구본과 섞지 않습니다.
 
 ## 9. GitHub의 역할과 업데이트 흐름
 
-GitHub 저장소 https://github.com/dykim-tech/portal 은 **설계도와 프로그램 소스의 버전 관리·변경 검토·자동 검사**를 위한 곳입니다. GitHub Actions가 문법 검사, 자동 테스트, 의존성 보안 검사를 수행합니다. GitHub 자체가 현재 PC의 포털 서버를 실행하거나 SQLite 운영 데이터를 실시간 보관하지는 않습니다.
+[GitHub 저장소](https://github.com/dykim-tech/portal)는 **설계도와 프로그램 소스의 버전 관리·변경 검토·자동 검사**를 위한 곳입니다. GitHub Actions가 문법 검사, 자동 테스트, 의존성 보안 검사를 수행합니다. 현재 포털은 블로그처럼 GitHub에서 정적 페이지만 제공하는 구조가 아닙니다. 로그인·검색·파일 업로드·업무 데이터 저장을 담당하는 Node.js 서버가 로컬 PC에서 실행되며, GitHub는 그 서버나 SQLite 운영 데이터를 실시간으로 호스팅하지 않습니다.
 
 ~~~mermaid
 flowchart LR
@@ -120,3 +122,13 @@ flowchart LR
 일반 사용 중 입력한 데이터는 PC의 SQLite에 즉시 저장됩니다. 코드 업데이트는 git pull과 서버 재시작을 해야 화면에 반영됩니다. .gitignore는 .env, data/, backups/, node_modules/ 및 로그를 제외합니다. 따라서 GitHub만으로는 운영 데이터 복구가 불가능하며 SQLite 백업을 별도로 보관해야 합니다.
 
 Docker로 운영하는 경우에는 PC의 data 폴더 대신 Compose의 portal_data 볼륨에 DB가, portal_backups 볼륨에 백업이 저장됩니다.
+
+## 10. PC 교체 시 이전
+
+새 PC로 옮길 때는 **GitHub에서 프로그램을 받고, 기존 PC의 SQLite 백업을 별도로 옮기는 두 작업**이 필요합니다. 기존 PC에서 입력을 중지하고 예약 작업을 사용 안 함으로 설정한 뒤 `npm.cmd run backup`으로 최종 백업을 만듭니다. 새 PC에 Node.js 24.13 이상 24.x와 Git을 설치해 코드를 받은 다음, 포털을 시작하기 전에 백업을 새 `data/portal.sqlite`로 복원합니다. `.env`가 있다면 `DATA_DIR` 등 옛 PC 경로를 새 환경에 맞게 검토합니다.
+
+복원 뒤 기존 관리자 계정으로 로그인하고 설치·자료·자산·업무일지 건수와 첨부파일을 확인합니다. 두 PC를 동시에 사용하면 데이터가 자동으로 합쳐지지 않습니다. 자세한 명령, 무결성 확인, 전환 실패 시 되돌리기는 [PC 이전 가이드](PC_MIGRATION.md)를 따릅니다. 백업 파일에는 업무 자료와 계정 해시가 포함되므로 공개 GitHub에 올리지 않습니다.
+
+## 11. 모바일·외부 접속 계획
+
+현재 기본 설정은 포털을 실행하는 **PC 자신의 `http://localhost:3000`**에서만 접속할 수 있습니다. 휴대폰의 `localhost`는 휴대폰 자신을 뜻하므로 현재 주소만으로는 접속할 수 없습니다. 집 안과 외부 모두에서 휴대폰으로 접속하는 요구는 확인했지만, 원격 접속 설정은 아직 진행하지 않았습니다. 추후 PC와 휴대폰에 Tailscale을 설치하고 인증된 HTTPS 주소, `APP_ORIGIN`, 로그인·접속 범위를 함께 점검하는 방식으로 계획합니다. 새 PC로 이전하면 그 접속 설정도 새 PC 기준으로 다시 확인해야 합니다.
