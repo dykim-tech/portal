@@ -1,36 +1,45 @@
 $ErrorActionPreference = 'Stop'
 $portalRoot = Split-Path -Parent $PSScriptRoot
-$runner = Join-Path $PSScriptRoot 'windows-run.ps1'
+$entry = Join-Path $portalRoot 'server/windows-start.mjs'
 $taskName = 'DYKIM Personal Portal'
 $node = (Get-Command node.exe -ErrorAction Stop).Source
 if (-not (Test-Path -LiteralPath (Join-Path $portalRoot 'node_modules/express'))) {
     throw 'Dependencies are missing. Run npm ci in the portal folder first.'
 }
-if (-not (Test-Path -LiteralPath $runner)) {
-    throw 'The portal runner script is missing.'
+if (-not (Test-Path -LiteralPath $entry)) {
+    throw 'The Windows portal entry point is missing. Run git pull first.'
 }
 $previousTask = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
 if ($previousTask -and $previousTask.State -eq 'Running') {
-    Stop-ScheduledTask -TaskName $taskName
+    Stop-ScheduledTask -TaskName $taskName -ErrorAction Stop
     Start-Sleep -Seconds 2
 }
-try {
-    $existing = Invoke-RestMethod -Uri 'http://127.0.0.1:3000/api/health' -TimeoutSec 2
-} catch {
-    $existing = $null
+# Older task versions could leave their Node child running after PowerShell exits.
+# Only stop a Node process on this port when its command is the portal entry point.
+$listeners = @(Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue)
+$processIds = @($listeners | Select-Object -ExpandProperty OwningProcess -Unique)
+foreach ($processId in $processIds) {
+    $process = Get-CimInstance Win32_Process -Filter "ProcessId = $processId"
+    if (-not $process -or $process.Name -ne 'node.exe' -or $process.CommandLine -notmatch 'server[\\/](index|windows-start)\.mjs') {
+        throw ('Port 3000 is used by another process (PID ' + $processId + '). Stop it before installing the portal task.')
+    }
+    Stop-Process -Id $processId -Force -ErrorAction Stop
 }
-if ($existing -and $existing.ok) {
-    throw 'A portal server is still running on port 3000. Close its old console window, then run this installer again.'
+for ($attempt = 0; $attempt -lt 10; $attempt++) {
+    if (-not @(Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue).Count) { break }
+    Start-Sleep -Seconds 1
+}
+if (@(Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue).Count) {
+    throw 'Port 3000 is still in use. Check the remaining process before continuing.'
 }
 $user = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
-$powershell = (Get-Command powershell.exe -ErrorAction Stop).Source
-$arguments = '-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy RemoteSigned -File "' + $runner + '" -NodePath "' + $node + '"'
-$action = New-ScheduledTaskAction -Execute $powershell -Argument $arguments -WorkingDirectory $portalRoot
+$arguments = if (Test-Path -LiteralPath (Join-Path $portalRoot '.env')) { '--env-file=.env server/windows-start.mjs' } else { 'server/windows-start.mjs' }
+$action = New-ScheduledTaskAction -Execute $node -Argument $arguments -WorkingDirectory $portalRoot
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $user
-# S4U runs in a non-interactive session without storing the user's password.
+# S4U starts Node in a non-interactive session without storing a password.
 $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType S4U -RunLevel Limited
 $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -MultipleInstances IgnoreNew -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
-Register-ScheduledTask -TaskName $taskName -Description 'Start the personal portal at Windows sign-in without a console window.' -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
+Register-ScheduledTask -TaskName $taskName -Description 'Start the personal portal directly without a console window.' -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
 Start-ScheduledTask -TaskName $taskName
 for ($attempt = 0; $attempt -lt 15; $attempt++) {
     Start-Sleep -Seconds 1
