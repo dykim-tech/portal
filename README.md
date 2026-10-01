@@ -35,7 +35,23 @@ Get-Content .\data\setup-token.txt
 
 Linux는 `cat data/setup-token.txt`를 사용합니다. 코드 파일은 관리자 생성 후 자동 삭제됩니다. 기본 계정·공유 비밀번호는 없습니다. 기존 사용자는 관리자가 사용자 관리 메뉴에서 추가합니다.
 
-접속 주소는 `.env`의 `APP_ORIGIN`과 정확히 같아야 합니다. 예를 들어 localhost 대신 127.0.0.1로 접속하면 쓰기 요청이 차단됩니다. 명령 창을 닫거나 PC를 종료하면 포털도 중지됩니다.
+접속 주소는 `.env`의 `APP_ORIGIN`과 정확히 같아야 합니다. 예를 들어 localhost 대신 127.0.0.1로 접속하면 쓰기 요청이 차단됩니다. 수동으로 `npm start`를 실행한 경우에는 명령 창을 닫으면 포털도 중지됩니다. Windows 자동 실행 설정은 아래 절차를 사용합니다.
+
+## Windows에서 PowerShell 없이 자동 실행
+
+포털을 실행 중인 PowerShell 창에서 **Ctrl+C**로 수동 서버를 먼저 중지합니다. 설치 작업은 한 번만 필요합니다.
+
+```powershell
+Set-Location 'F:\ChatGPT\DYKIM-PORTAL'
+git pull --ff-only
+powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\scripts\windows-install.ps1
+```
+
+설치가 성공하면 `Portal is running in the background at http://localhost:3000`이 출력됩니다. 그 뒤 PowerShell 창을 닫아도 포털이 유지되고, Windows에 다시 로그인하면 자동으로 시작합니다. 작업 이름은 **DYKIM Personal Portal**입니다. 이 방식은 해당 Windows 사용자가 로그인한 동안 실행되며, 로그아웃 상태나 PC 전원 종료 중에는 접속할 수 없습니다.
+
+설치 스크립트는 현재 사용자 권한으로 작업 스케줄러에 등록하고 즉시 실행합니다. 비밀번호를 스크립트에 저장하거나 시스템 전체의 실행 정책을 변경하지 않습니다. 앱의 기존 `data/`와 `.env`를 계속 사용합니다. 서버 실행 기록은 `data/server.log`에 저장됩니다.
+
+실패하면 작업 스케줄러에서 **DYKIM Personal Portal**의 상태를 확인하고 `data/server.log`의 마지막 부분을 읽으세요. 수동으로 다시 시작할 때는 작업 스케줄러의 **실행**을 누르거나 `Start-ScheduledTask -TaskName 'DYKIM Personal Portal'`을 실행하면 됩니다. 포털 파일을 업데이트할 때는 먼저 스케줄러에서 작업을 **끝내기**로 중지하고 업데이트한 다음 작업을 다시 시작합니다.
 
 ## 자료 관리와 미리보기
 
