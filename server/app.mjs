@@ -113,7 +113,7 @@ export function createPortal(options = {}) {
   const item = id => { const row = db.prepare('SELECT * FROM items WHERE id=?').get(id); if (!row) throw fail(404, '물품을 찾을 수 없습니다.'); return row; };
   const history = (id, actor, action, detail) => db.prepare('INSERT INTO history(item_id,actor_id,action,detail,created_at) VALUES(?,?,?,?,?)').run(id, actor, action, detail, now());
 
-  app.get('/api/health', (_req,res) => res.json({ ok: true }));
+  app.get('/api/health', (_req,res) => res.json({ ok: true, version: 3 }));
   app.get('/api/auth/me', (req,res) => res.json({ user: req.user ? publicUser(req.user) : null, setupRequired: Boolean(setupToken) }));
   app.post('/api/auth/setup', async (req,res) => {
     limiter(req, 'setup');
