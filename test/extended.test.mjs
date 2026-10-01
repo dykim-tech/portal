@@ -42,9 +42,15 @@ test('categories, installation files, customer work logs, and CSV reports', asyn
     const assetLeaf = await makeCategory('items', '스위치', assetMid);
     assert.equal((await request('/categories?scope=items')).data.categories.length, 3);
     assert.equal((await request('/installations', 'POST', { name: '잘못된 분류', customer: 'A', installed_on: '2026-10-01', status: 'installed', category_id: assetLeaf })).status, 404);
-    const created = await request('/installations', 'POST', { name: '서버 설치', customer: '테스트 고객', installed_on: '2026-10-01', status: 'installed', category_id: installLeaf, notes: '완료' });
+    const created = await request('/installations', 'POST', { name: 'Petra Cipher', customer: '테스트 고객', product_version: 'Petra Cipher for Linux', quantity: 2, installed_on: '2026-10-01', completed_on: '2026-10-02', contact: '고객 담당자', engineer: '설치 엔지니어', status: 'installed', category_id: installLeaf, notes: '완료' });
     assert.equal(created.status, 201, JSON.stringify(created.data));
     const installationId = created.data.installation.id;
+    assert.equal(created.data.installation.quantity, 2);
+    assert.equal(created.data.installation.completed_on, '2026-10-02');
+    assert.equal(created.data.installation.contact, '고객 담당자');
+    assert.equal((await request('/installations?q=고객 담당자')).data.total, 1);
+    assert.equal((await request('/installations', 'POST', { name: '검증', customer: 'A', installed_on: '2026-10-01', completed_on: '2026-09-30', quantity: 1, status: 'installed' })).status, 400);
+    assert.equal((await request('/installations', 'POST', { name: '검증', customer: 'A', installed_on: '2026-10-01', quantity: 0, status: 'installed' })).status, 400);
     assert.equal((await request('/installations?category_id=' + installMajor)).data.total, 1);
     assert.equal((await request('/installations?category_id=' + serverMid)).data.total, 1);
     const upload = new FormData();
@@ -80,7 +86,9 @@ test('categories, installation files, customer work logs, and CSV reports', asyn
     const installationCsv = await request('/reports/installations.csv');
     assert.equal(installationCsv.status, 200);
     assert.match(installationCsv.data, /고객사 \/ 서버 \/ 신규 설치/);
-    assert.match(installationCsv.data, /서버 설치/);
+    assert.match(installationCsv.data, /Petra Cipher for Linux/);
+    assert.match(installationCsv.data, /설치종료일/);
+    assert.match(installationCsv.data, /고객 담당자/);
     const formulaCustomer = await request('/customers', 'POST', { name: '=2+2' });
     const formulaLog = await request('/work-logs', 'POST', { customer_id: formulaCustomer.data.customer.id, work_date: '2026-10-01', title: 'CSV 검사', status: 'done' });
     assert.equal(formulaLog.status, 201);
@@ -103,6 +111,7 @@ test('categories, installation files, customer work logs, and CSV reports', asyn
   const reopened = createPortal({ dataDir, origin });
   try {
     assert.equal(reopened.db.prepare('SELECT COUNT(*) n FROM installations').get().n, 1);
+    assert.equal(reopened.db.prepare('SELECT quantity FROM installations').get().quantity, 2);
     assert.equal(reopened.db.prepare('SELECT COUNT(*) n FROM work_logs').get().n, 2);
     assert.equal(reopened.db.prepare('SELECT COUNT(*) n FROM record_categories').get().n, 6);
   } finally { reopened.db.close(); }
