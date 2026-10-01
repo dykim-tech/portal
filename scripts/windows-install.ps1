@@ -26,10 +26,10 @@ foreach ($processId in $processIds) {
     Stop-Process -Id $processId -Force -ErrorAction Stop
 }
 for ($attempt = 0; $attempt -lt 10; $attempt++) {
-    if (-not @(Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue).Count) { break }
+    if (@(Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue).Count -eq 0) { break }
     Start-Sleep -Seconds 1
 }
-if (@(Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue).Count) {
+if (@(Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue).Count -gt 0) {
     throw 'Port 3000 is still in use. Check the remaining process before continuing.'
 }
 $user = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
@@ -45,7 +45,7 @@ for ($attempt = 0; $attempt -lt 15; $attempt++) {
     Start-Sleep -Seconds 1
     try {
         $health = Invoke-RestMethod -Uri 'http://127.0.0.1:3000/api/health' -TimeoutSec 2
-        if ($health.ok) {
+        if ($health.ok -and $health.version -ge 3) {
             Write-Output 'Portal is running in the background at http://localhost:3000'
             Write-Output ('Task name: ' + $taskName)
             Write-Output ('Log file: ' + (Join-Path $portalRoot 'data/server.log'))
