@@ -47,9 +47,9 @@ export function registerWork(app, { db, requireRole }) {
     if (!row) throw fail(404, '업무일지를 찾을 수 없습니다.');
     return row;
   };
-  const data = body => {
+  const data = (body, existingCustomerId = null) => {
     const c = customer(body.customer_id);
-    if (!c.active) throw fail(400, '비활성 고객에는 업무일지를 등록할 수 없습니다.');
+    if (!c.active && c.id !== existingCustomerId) throw fail(400, '비활성 고객에는 업무일지를 등록할 수 없습니다.');
     if (!statuses.has(body.status)) throw fail(400, '진행 상태를 확인해 주세요.');
     return {
       customer_id: c.id, work_date: date(body.work_date),
@@ -101,7 +101,7 @@ export function registerWork(app, { db, requireRole }) {
     res.status(201).json({ log: log(result.lastInsertRowid) });
   });
   app.put('/api/work-logs/:id', edit, (req, res) => {
-    const original = log(req.params.id), values = data(req.body);
+    const original = log(req.params.id), values = data(req.body, original.customer_id);
     if (original.version !== Number(req.body.version)) throw fail(409, '다른 사용자가 수정했습니다. 최신 업무일지를 다시 열어 주세요.');
     db.prepare('UPDATE work_logs SET customer_id=?,work_date=?,title=?,owner=?,status=?,content=?,version=version+1,updated_by=?,updated_at=? WHERE id=?')
       .run(...Object.values(values), req.user.id, now(), original.id);
