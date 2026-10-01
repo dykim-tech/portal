@@ -129,7 +129,7 @@ export function createExtras(ctx) {
     }
     if (action === 'work-customer') { work.customer = id ? Number(id) : null; work.page = 1; await renderWork(); return true; }
     if (action === 'customer-new' || action === 'customer-edit') { customerDialog(id); return true; }
-    if (action === 'work-new' || action === 'work-log') { await workDialog(id); return true; }
+    if (action === 'work-new' || action === 'work-log') { if (!id && !work.customers.some(c => c.active)) throw new Error('고객을 먼저 등록해 주세요.'); await workDialog(id); return true; }
     if (action === 'work-prev' || action === 'work-next') { work.page += action === 'work-prev' ? -1 : 1; await renderWork(); return true; }
     if (action === 'work-reset') { work.filters = {}; work.customer = null; work.page = 1; await renderWork(); return true; }
     if (action === 'report-reset') { report.from = ''; report.to = ''; await renderReports(); return true; }
@@ -139,12 +139,13 @@ export function createExtras(ctx) {
     if (form.id === 'category-form') {
       const scope = form.dataset.scope, categoryId = form.dataset.id;
       if (categoryId) await api('/categories/' + categoryId, { method: 'PUT', body: { scope, name: values.name } });
-      else await api('/categories', { method: 'POST', body: { scope, name: values.name, parent_id: values.parent_id || null } });
+      else { const created = await api('/categories', { method: 'POST', body: { scope, name: values.name, parent_id: values.parent_id || null } }); const filters = scope === 'items' ? state.filters : features.installationFilters; filters.category_id = String(created.id); }
       modal.close(); await loadCategories(scope); await renderView(); toast('분류를 저장했습니다.'); return true;
     }
     if (form.id === 'customer-form') {
       const c = work.selectedCustomer;
-      await api('/customers' + (c.id ? '/' + c.id : ''), { method: c.id ? 'PUT' : 'POST', body: { ...values, active: c.id ? form.elements.active.checked : true } });
+      const saved = await api('/customers' + (c.id ? '/' + c.id : ''), { method: c.id ? 'PUT' : 'POST', body: { ...values, active: c.id ? form.elements.active.checked : true } });
+      work.customer = saved.customer.id;
       modal.close(); await renderWork(); toast('고객 정보를 저장했습니다.'); return true;
     }
     if (form.id === 'work-form') {
