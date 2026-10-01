@@ -228,7 +228,7 @@ export function createPortal(options = {}) {
   for (const dir of ['build','cmaps','standard_fonts','wasm']) app.use('/vendor/pdfjs/'+dir, express.static(resolve(dirname(fileURLToPath(import.meta.url)), '../node_modules/pdfjs-dist',dir)));
   app.use(express.static(resolve(dirname(fileURLToPath(import.meta.url)),'../public'),{etag:true}));
   app.use((err,_req,res,_next)=>{
-    if(err.code==='SQLITE_CONSTRAINT_UNIQUE' || /UNIQUE constraint failed/.test(err.message))return res.status(409).json({error:'이미 사용 중인 이메일, 관리번호 또는 폴더명입니다.'});
+    if(err.code==='SQLITE_CONSTRAINT_UNIQUE' || /UNIQUE constraint failed/.test(err.message))return res.status(409).json({error:'같은 이름이나 관리번호가 이미 등록되어 있습니다.'});
     if(err instanceof multer.MulterError)return res.status(400).json({error:err.code==='LIMIT_FILE_SIZE'?'파일은 10MB 이하로 첨부해 주세요.':'첨부 요청이 올바르지 않습니다.'});
     const status=err.status??500;if(status>=500)console.error(err);
     res.status(status).json({error:status>=500?'처리 중 오류가 발생했습니다. 다시 시도해 주세요.':err.message});
