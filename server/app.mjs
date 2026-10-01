@@ -1,5 +1,8 @@
 import express from 'express';
 import { initializeFeatures, registerFeatures } from './features.mjs';
+import { categoryInput, categoryDescendants } from './categories.mjs';
+import { initializeWork, registerWork } from './work.mjs';
+import { registerReports } from './reports.mjs';
 import helmet from 'helmet';
 import multer from 'multer';
 import { randomBytes, scrypt as scryptCallback, timingSafeEqual, createHash } from 'node:crypto';
@@ -47,13 +50,13 @@ async function passwordMatches(value, encoded) {
   const actual = await scrypt(value, salt, 64);
   return timingSafeEqual(actual, Buffer.from(expected, 'hex'));
 }
-function itemData(body) {
+function itemData(body, db) {
   if (!['general','it'].includes(body.category) || !statuses.includes(body.status)) throw fail(400, '분류 또는 상태를 확인해 주세요.');
   return {
     name: text(body.name, '물품명', 150, true), asset_code: text(body.asset_code, '관리번호', 80, true),
     category: body.category, status: body.status, quantity: integer(body.quantity, '수량', 0, 1000000),
     location: text(body.location, '위치'), owner: text(body.owner, '담당자'), serial: text(body.serial, '시리얼 번호'),
-    description: text(body.description, '설명', 10000), due_date: date(body.due_date), reminder_days: integer(body.reminder_days, '사전 알림 일수', 0, 365)
+    description: text(body.description, '설명', 10000), due_date: date(body.due_date), reminder_days: integer(body.reminder_days, '사전 알림 일수', 0, 365), category_id: categoryInput(db, 'items', body.category_id)
   };
 }
 
@@ -61,6 +64,7 @@ export function createPortal(options = {}) {
   const dataDir = resolve(options.dataDir ?? process.env.DATA_DIR ?? './data');
   const db = openDatabase(dataDir);
   initializeFeatures(db);
+  initializeWork(db);
   const app = express();
   const origin = new URL(options.origin ?? process.env.APP_ORIGIN ?? 'http://localhost:3000').origin;
   const secure = options.secure ?? process.env.COOKIE_SECURE === 'true';
@@ -169,6 +173,7 @@ export function createPortal(options = {}) {
     const q=text(req.query.q,'검색어',200);
     if(q){ clauses.push("(i.name LIKE ? ESCAPE '\\' OR i.asset_code LIKE ? ESCAPE '\\' OR i.owner LIKE ? ESCAPE '\\' OR i.serial LIKE ? ESCAPE '\\')"); const pattern=`%${q.replace(/[\\%_]/g,'\\$&')}%`; params.push(pattern,pattern,pattern,pattern); }
     for(const key of ['category','status']) if(req.query[key]){clauses.push(`i.${key}=?`);params.push(text(req.query[key],key,30));}
+    if(req.query.category_id){const ids=categoryDescendants(db,'items',req.query.category_id);clauses.push(`i.category_id IN (${ids.map(()=>'?').join(',')})`);params.push(...ids);}
     if(req.query.from){clauses.push('i.updated_at>=?');params.push(date(req.query.from)+'T00:00:00+09:00'); params[params.length-1]=new Date(params.at(-1)).toISOString();}
     if(req.query.to){clauses.push('i.updated_at<=?');params.push(new Date(date(req.query.to)+'T23:59:59.999+09:00').toISOString());}
     if(req.query.due==='set') clauses.push('i.due_date IS NOT NULL');
@@ -180,12 +185,12 @@ export function createPortal(options = {}) {
   });
   app.get('/api/items/:id',(req,res)=>{const current=item(req.params.id);res.json({item:current,files:db.prepare('SELECT id,name,size,created_at FROM files WHERE item_id=? ORDER BY id DESC').all(current.id),history:db.prepare('SELECT h.*,u.name AS actor FROM history h JOIN users u ON u.id=h.actor_id WHERE item_id=? ORDER BY h.id DESC LIMIT 100').all(current.id)});});
   app.post('/api/items',requireRole(['admin','editor']),(req,res)=>{
-    const data=itemData(req.body),stamp=now();
+    const data=itemData(req.body, db),stamp=now();
     const id=transaction(db,()=>{const id=Number(db.prepare(`INSERT INTO items(${Object.keys(data).join(',')},created_by,updated_by,created_at,updated_at) VALUES(${Array(Object.keys(data).length+4).fill('?').join(',')})`).run(...Object.values(data),req.user.id,req.user.id,stamp,stamp).lastInsertRowid);history(id,req.user.id,'등록',JSON.stringify(data));return id;});
     scanDeadlines(db);res.status(201).json({item:item(id)});
   });
   app.put('/api/items/:id',requireRole(['admin','editor']),(req,res)=>{
-    const data=itemData(req.body),version=integer(req.body.version,'버전',1,Number.MAX_SAFE_INTEGER);
+    const data=itemData(req.body, db),version=integer(req.body.version,'버전',1,Number.MAX_SAFE_INTEGER);
     transaction(db,()=>{
       const original=item(req.params.id);
       if(original.version!==version) throw fail(409,'다른 사용자가 수정했습니다. 창을 닫고 최신 자료를 다시 열어 주세요.');
@@ -217,11 +222,13 @@ export function createPortal(options = {}) {
   app.get('/api/notifications',(req,res)=>{scanDeadlines(db);res.json({notifications:db.prepare('SELECT n.*,i.asset_code FROM notifications n JOIN items i ON i.id=n.item_id WHERE n.user_id=? ORDER BY n.id DESC LIMIT 200').all(req.user.id),unread:db.prepare('SELECT COUNT(*) AS n FROM notifications WHERE user_id=? AND read_at IS NULL').get(req.user.id).n});});
   app.post('/api/notifications/read',(req,res)=>{if(req.body.id)db.prepare('UPDATE notifications SET read_at=? WHERE id=? AND user_id=?').run(now(),integer(req.body.id,'알림',1,Number.MAX_SAFE_INTEGER),req.user.id);else db.prepare('UPDATE notifications SET read_at=? WHERE user_id=? AND read_at IS NULL').run(now(),req.user.id);res.json({ok:true});});
   registerFeatures(app, { db, requireRole });
+  registerWork(app, { db, requireRole });
+  registerReports(app, { db });
   app.use('/api',(_req,_res,next)=>next(fail(404,'요청한 기능을 찾을 수 없습니다.')));
   for (const dir of ['build','cmaps','standard_fonts','wasm']) app.use('/vendor/pdfjs/'+dir, express.static(resolve(dirname(fileURLToPath(import.meta.url)), '../node_modules/pdfjs-dist',dir)));
   app.use(express.static(resolve(dirname(fileURLToPath(import.meta.url)),'../public'),{etag:true}));
   app.use((err,_req,res,_next)=>{
-    if(err.code==='SQLITE_CONSTRAINT_UNIQUE' || /UNIQUE constraint failed/.test(err.message))return res.status(409).json({error:'이미 사용 중인 이메일, 관리번호 또는 폴더명입니다.'});
+    if(err.code==='SQLITE_CONSTRAINT_UNIQUE' || /UNIQUE constraint failed/.test(err.message))return res.status(409).json({error:'같은 이름이나 관리번호가 이미 등록되어 있습니다.'});
     if(err instanceof multer.MulterError)return res.status(400).json({error:err.code==='LIMIT_FILE_SIZE'?'파일은 10MB 이하로 첨부해 주세요.':'첨부 요청이 올바르지 않습니다.'});
     const status=err.status??500;if(status>=500)console.error(err);
     res.status(status).json({error:status>=500?'처리 중 오류가 발생했습니다. 다시 시도해 주세요.':err.message});
