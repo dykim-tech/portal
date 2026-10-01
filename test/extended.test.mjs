@@ -7,7 +7,8 @@ import { createPortal } from '../server/app.mjs';
 
 test('categories, installation files, customer work logs, and CSV reports', async () => {
   const origin = 'http://localhost:3101';
-  const portal = createPortal({ dataDir: mkdtempSync(join(tmpdir(), 'portal-extended-')), origin });
+  const dataDir = mkdtempSync(join(tmpdir(), 'portal-extended-'));
+  const portal = createPortal({ dataDir, origin });
   const server = portal.app.listen(0, '127.0.0.1');
   await new Promise(resolve => server.once('listening', resolve));
   const base = 'http://127.0.0.1:' + server.address().port;
@@ -80,6 +81,11 @@ test('categories, installation files, customer work logs, and CSV reports', asyn
     assert.equal(installationCsv.status, 200);
     assert.match(installationCsv.data, /고객사 \/ 서버 \/ 신규 설치/);
     assert.match(installationCsv.data, /서버 설치/);
+    const formulaCustomer = await request('/customers', 'POST', { name: '=2+2' });
+    const formulaLog = await request('/work-logs', 'POST', { customer_id: formulaCustomer.data.customer.id, work_date: '2026-10-01', title: 'CSV 검사', status: 'done' });
+    assert.equal(formulaLog.status, 201);
+    const protectedCsv = await request('/reports/work-logs.csv');
+    assert.match(protectedCsv.data, /"'=2\+2"/);
     const workCsv = await request('/reports/work-logs.csv?from=2026-10-02');
     assert.equal(workCsv.status, 200);
     assert.doesNotMatch(workCsv.data, /정상 작동/);
@@ -94,4 +100,10 @@ test('categories, installation files, customer work logs, and CSV reports', asyn
     await new Promise(resolve => server.close(resolve));
     portal.db.close();
   }
+  const reopened = createPortal({ dataDir, origin });
+  try {
+    assert.equal(reopened.db.prepare('SELECT COUNT(*) n FROM installations').get().n, 1);
+    assert.equal(reopened.db.prepare('SELECT COUNT(*) n FROM work_logs').get().n, 2);
+    assert.equal(reopened.db.prepare('SELECT COUNT(*) n FROM record_categories').get().n, 6);
+  } finally { reopened.db.close(); }
 });
