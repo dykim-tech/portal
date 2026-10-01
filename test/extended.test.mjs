@@ -4,6 +4,7 @@ import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createPortal } from '../server/app.mjs';
+import { openDatabase } from '../server/db.mjs';
 
 test('categories, installation files, customer work logs, and CSV reports', async () => {
   const origin = 'http://localhost:3101';
@@ -115,4 +116,26 @@ test('categories, installation files, customer work logs, and CSV reports', asyn
     assert.equal(reopened.db.prepare('SELECT COUNT(*) n FROM work_logs').get().n, 2);
     assert.equal(reopened.db.prepare('SELECT COUNT(*) n FROM record_categories').get().n, 6);
   } finally { reopened.db.close(); }
+});
+
+test('older installation records keep their data when sheet columns are added', () => {
+  const dataDir = mkdtempSync(join(tmpdir(), 'portal-install-migrate-'));
+  const legacy = openDatabase(dataDir);
+  legacy.exec(`CREATE TABLE installations (
+    id INTEGER PRIMARY KEY,name TEXT NOT NULL,customer TEXT NOT NULL,location TEXT NOT NULL DEFAULT '',installed_on TEXT NOT NULL,
+    engineer TEXT NOT NULL DEFAULT '',product_version TEXT NOT NULL DEFAULT '',status TEXT NOT NULL,notes TEXT NOT NULL DEFAULT '',
+    version INTEGER NOT NULL DEFAULT 1,created_by INTEGER NOT NULL REFERENCES users(id),updated_by INTEGER NOT NULL REFERENCES users(id),created_at TEXT NOT NULL,updated_at TEXT NOT NULL);
+    INSERT INTO users(id,name,email,password,role,created_at) VALUES(1,'기존 관리자','old@example.test','unused','admin','2026-01-01T00:00:00Z');
+    INSERT INTO installations(name,customer,installed_on,status,created_by,updated_by,created_at,updated_at)
+    VALUES('기존 제품','기존 고객','2026-01-01','installed',1,1,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z');`);
+  legacy.close();
+  const portal = createPortal({ dataDir });
+  try {
+    const row = portal.db.prepare('SELECT * FROM installations WHERE id=1').get();
+    assert.equal(row.name, '기존 제품');
+    assert.equal(row.customer, '기존 고객');
+    assert.equal(row.quantity, 1);
+    assert.equal(row.completed_on, null);
+    assert.equal(row.contact, '');
+  } finally { portal.db.close(); }
 });
