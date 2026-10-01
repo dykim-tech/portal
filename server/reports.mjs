@@ -36,8 +36,8 @@ export function registerReports(app, { db }) {
   app.get('/api/reports', (req, res) => {
     const dates = range(req.query);
     const installations = predicate('installed_on', dates);
-    const items = predicate('substr(updated_at,1,10)', dates);
-    const manuals = predicate('substr(created_at,1,10)', dates);
+    const items = predicate("date(updated_at,'+9 hours')", dates);
+    const manuals = predicate("date(created_at,'+9 hours')", dates);
     const work = predicate('work_date', dates);
     const count = (table, p) => db.prepare(`SELECT COUNT(*) n FROM ${table} ${p.where}`).get(...p.args).n;
     const group = (table, field, p) => db.prepare(`SELECT ${field} value,COUNT(*) count FROM ${table} ${p.where} GROUP BY ${field} ORDER BY count DESC,value`).all(...p.args);
@@ -77,15 +77,15 @@ export function registerReports(app, { db }) {
       args = p.args;
       project = row => [row.installed_on,categoryPaths.get(row.category_id) ?? '미분류',row.name,row.customer,row.location,row.engineer,row.product_version,row.status,row.notes,row.file_count];
     } else if (kind === 'items') {
-      const p = predicate('substr(i.updated_at,1,10)', dates);
+      const p = predicate("date(i.updated_at,'+9 hours')", dates);
       header = ['최근 수정','대분류 / 중분류 / 소분류','유형','자산명','관리번호','상태','수량','위치','담당자','시리얼','관리 기한','설명','첨부자료 수'];
       sql = `SELECT i.*,(SELECT COUNT(*) FROM files f WHERE f.item_id=i.id) file_count FROM items i ${p.where} ORDER BY i.updated_at DESC,i.id DESC`;
       args = p.args;
       project = row => [row.updated_at,categoryPaths.get(row.category_id) ?? '미분류',row.category,row.name,row.asset_code,row.status,row.quantity,row.location,row.owner,row.serial,row.due_date,row.description,row.file_count];
     } else if (kind === 'manuals') {
-      const p = predicate('substr(m.created_at,1,10)', dates);
+      const p = predicate("date(m.created_at,'+9 hours')", dates);
       header = ['등록일','대분류 / 중분류 / 소분류','파일명','크기(byte)','등록자'];
-      sql = `SELECT m.*,u.name uploader FROM manuals m JOIN users u ON u.id=m.uploaded_by ${p.where} ORDER BY m.created_at DESC,m.id DESC`;
+      sql = `SELECT m.id,m.folder_id,m.name,m.size,m.created_at,u.name uploader FROM manuals m JOIN users u ON u.id=m.uploaded_by ${p.where} ORDER BY m.created_at DESC,m.id DESC`;
       args = p.args;
       project = row => [row.created_at,folderPaths.get(row.folder_id) ?? '미분류',row.name,row.size,row.uploader];
     } else if (kind === 'work-logs') {
