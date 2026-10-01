@@ -47,9 +47,9 @@ git pull --ff-only
 powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File .\scripts\windows-install.ps1
 ```
 
-설치가 성공하면 `Portal is running in the background at http://localhost:3000`이 출력됩니다. 그 뒤 PowerShell 창을 닫아도 포털이 유지되고, Windows에 다시 로그인하면 자동으로 시작합니다. 작업 이름은 **DYKIM Personal Portal**입니다. 이 방식은 해당 Windows 사용자가 로그인한 동안 실행되며, 로그아웃 상태나 PC 전원 종료 중에는 접속할 수 없습니다.
+설치가 성공하면 `Portal is running in the background at http://localhost:3000`이 출력됩니다. 그 뒤 PowerShell 창을 닫아도 포털이 유지되고, Windows에 다시 로그인하면 자동으로 시작합니다. 작업 이름은 **DYKIM Personal Portal**입니다. 기존 예약 작업이 있으면 설치 스크립트가 중지하고 콘솔 창 없는 작업으로 교체합니다. PC 전원이 꺼지면 접속할 수 없습니다.
 
-설치 스크립트는 현재 사용자 권한으로 작업 스케줄러에 등록하고 즉시 실행합니다. 비밀번호를 스크립트에 저장하거나 시스템 전체의 실행 정책을 변경하지 않습니다. 앱의 기존 `data/`와 `.env`를 계속 사용합니다. 서버 실행 기록은 `data/server.log`에 저장됩니다.
+설치 스크립트는 현재 사용자 권한으로 작업 스케줄러에 등록하고 즉시 실행합니다. 비밀번호를 스크립트에 저장하거나 시스템 전체의 실행 정책을 변경하지 않습니다. 이 비대화형 실행 방식은 네트워크 공유 드라이브나 Windows 암호화 파일에 접근할 수 없으므로 포털 폴더와 `data/`는 로컬 디스크에 두세요. 앱의 기존 `data/`와 `.env`를 계속 사용합니다. 서버 실행 기록은 `data/server.log`에 저장됩니다.
 
 실패하면 작업 스케줄러에서 **DYKIM Personal Portal**의 상태를 확인하고 `data/server.log`의 마지막 부분을 읽으세요. 수동으로 다시 시작할 때는 작업 스케줄러의 **실행**을 누르거나 `Start-ScheduledTask -TaskName 'DYKIM Personal Portal'`을 실행하면 됩니다. 포털 파일을 업데이트할 때는 먼저 스케줄러에서 작업을 **끝내기**로 중지하고 업데이트한 다음 작업을 다시 시작합니다.
 
