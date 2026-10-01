@@ -98,14 +98,13 @@ async function renderDashboard(){
  document.querySelector('#content').innerHTML=pageHead('WORKSPACE OVERVIEW','대시보드',`${state.user.name}님, 오늘의 설치·자료·자산 현황입니다.`)+`<div class="stats">${[['등록 자산',d.counts.assets,'items'],['설치 정보',d.counts.installations,'installations'],['등록 자료',d.counts.manuals,'library'],['읽지 않은 알림',d.counts.unread,'notifications']].map(([name,n,view])=>`<button class="stat stat-button" data-view="${view}"><div class="stat-label">${name}</div><div class="stat-value">${n}<span>건</span></div></button>`).join('')}</div><div class="dashboard-grid"><section class="panel"><div class="panel-head"><h2>다가오는 관리 기한</h2><button class="small" data-view="notifications">기한 알림 보기</button></div>${d.deadlines.length?d.deadlines.map(i=>`<div class="dashboard-row"><button class="link-button" data-action="item" data-id="${i.id}">${esc(i.name)}<span class="secondary-line">${esc(i.asset_code)}</span></button><span class="badge ${i.due_date<d.today?'overdue':i.due_date===d.today?'today':'upcoming'}">${esc(i.due_date)}${i.due_date<d.today?' · 경과':i.due_date===d.today?' · 오늘':''}</span></div>`).join(''):'<div class="empty"><h3>7일 이내 예정된 기한이 없습니다</h3><p>자산의 관리 기한을 등록하면 여기에 표시됩니다.</p></div>'}</section><section class="panel"><div class="panel-head"><h2>최근 설치 정보</h2><button class="small" data-view="installations">전체 보기</button></div>${d.installations.length?d.installations.map(i=>`<div class="dashboard-row"><button class="link-button" data-action="installation" data-id="${i.id}">${esc(i.name)}<span class="secondary-line">${esc(i.customer)} · ${i.installed_on}</span></button><span class="badge ${i.status}">${labels[i.status]}</span></div>`).join(''):'<div class="empty"><h3>아직 설치 정보가 없습니다</h3><p>사업장과 설치 제품 정보를 등록해 보세요.</p></div>'}</section><section class="panel full"><div class="panel-head"><h2>최근 업데이트한 자산</h2><button class="small" data-view="items">자산 관리</button></div>${d.recent.length?d.recent.map(i=>`<div class="dashboard-row"><button class="link-button" data-action="item" data-id="${i.id}">${esc(i.name)}<span class="secondary-line">${esc(i.asset_code)} · ${labels[i.category]}</span></button><small>${fmt(i.updated_at)}</small></div>`).join(''):'<div class="empty"><h3>등록된 자산이 없습니다</h3><p>일반 비품과 IT 장비를 등록하고 관리하세요.</p></div>'}</section></div>`;
 }
 async function renderInstallations(){
-  await extras.loadCategories('installations');
   const d=await api('/installations?'+new URLSearchParams({...features.installationFilters,page:features.installationPage}));
   if(state.view!=='installations')return;
   const f=features.installationFilters;
   const shortDate=value=>value?value.slice(2).replaceAll('-','.'): '—';
   const rows=d.installations.map((i,index)=>`<tr>
     <td class="installation-number">${(d.page-1)*25+index+1}</td>
-    <td class="installation-customer">${esc(i.customer)}${i.category_id?`<span class="secondary-line">${esc(extras.categoryPath('installations',i.category_id))}</span>`:''}</td>
+    <td class="installation-customer">${esc(i.customer)}</td>
     <td><button class="link-button" data-action="installation" data-id="${i.id}">${esc(i.name)}</button><span class="secondary-line">${esc(labels[i.status])}</span></td>
     <td class="installation-text">${esc(i.product_version)||'—'}</td>
     <td class="installation-number">${i.quantity??1}</td>
@@ -124,10 +123,8 @@ async function renderInstallations(){
     </form>
     ${d.installations.length?`<div class="table-wrap"><table class="installation-sheet"><thead><tr><th>구분</th><th>고객사</th><th>제품명</th><th>세부내용</th><th>수량</th><th>설치시작일</th><th>설치종료일</th><th>담당자</th><th>설치엔지니어</th><th>비고</th></tr></thead><tbody>${rows}</tbody></table></div>`:'<div class="empty"><h3>표시할 설치 정보가 없습니다</h3><p>설치 정보를 등록하거나 검색 조건을 변경해 주세요.</p></div>'}
     <div class="footer-row"><span>설치 정보 ${d.total}건</span><div class="pager"><button class="small" data-action="installation-prev" ${d.page<=1?'disabled':''}>이전</button><span>${d.page} / ${Math.max(1,Math.ceil(d.total/25))}</span><button class="small" data-action="installation-next" ${d.page>=Math.ceil(d.total/25)?'disabled':''}>다음</button></div></div></section>`;
-  extras.attachCategoryPanel('installations');
 }
 async function installationDialog(id){
-  await extras.loadCategories('installations');
   const result=id?await api('/installations/'+id):{installation:{status:'installed',installed_on:new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Seoul'}).format(new Date()),quantity:1},files:[]};
   const i=result.installation,disabled=canEdit()?'':'disabled';features.installation=i;
   openDialog(id?'설치 정보 상세':'설치 정보 등록',`<form id="installation-form"><div class="form-grid">
@@ -140,7 +137,6 @@ async function installationDialog(id){
     ${input('contact','담당자',i.contact,`maxlength="200" ${disabled}`)}
     ${input('engineer','설치엔지니어',i.engineer,`maxlength="200" ${disabled}`)}
     <label class="full">비고<textarea name="notes" maxlength="10000" ${disabled}>${esc(i.notes)}</textarea></label>
-    ${extras.leafSelect('installations',i.category_id,!id)}
     <label>상태<select name="status" ${disabled}>${options(['planned','installed','maintenance','closed'],i.status)}</select></label>
     ${input('location','설치 위치',i.location,`maxlength="200" ${disabled}`)}
   </div>${canEdit()?'<div class="form-actions"><button type="button" data-action="close">취소</button><button class="primary">저장</button></div>':''}</form>${id?`<section class="subsection"><h3>첨부자료 <small>${result.files.length}개</small></h3>${result.files.length?result.files.map(f=>`<div class="file-row"><div><strong>${esc(f.name)}</strong><span class="secondary-line">${fileSize(f.size)} · ${fmt(f.created_at)}</span></div><div class="file-actions">${f.preview_type?`<a href="/api/installation-files/${f.id}/preview" target="_blank" rel="noopener">미리보기</a>`:''}<a href="/api/installation-files/${f.id}/download">다운로드</a>${canEdit()?`<button class="small danger" data-action="installation-delete-file" data-id="${f.id}">삭제</button>`:''}</div></div>`).join(''):'<p class="muted">등록된 첨부자료가 없습니다.</p>'}${canEdit()?'<form class="upload" id="installation-upload"><input aria-label="첨부할 자료" type="file" name="file" required><button type="submit">자료 첨부</button></form><p class="help-line">파일당 최대 10MB · 설치 정보당 총 50MB.</p>':''}</section>`:'<p class="save-note">설치 정보를 먼저 저장하면 자료를 첨부할 수 있습니다.</p>'}`);
@@ -183,8 +179,8 @@ async function featureAction(action,id,button){
 }
 async function featureSubmit(form,values){
  switch(form.id){
- case 'installation-filter':if(values.from&&values.to&&values.from>values.to)throw new Error('종료일은 시작일 이후로 설정해 주세요.');const categoryId=features.installationFilters.category_id;features.installationFilters=Object.fromEntries(Object.entries(values).filter(([,v])=>v));if(categoryId)features.installationFilters.category_id=categoryId;features.installationPage=1;await renderInstallations();return true;
- case 'installation-form':values.version=features.installation.version;{const saved=await api('/installations'+(features.installation.id?'/'+features.installation.id:''),{method:features.installation.id?'PUT':'POST',body:values});await renderView();await installationDialog(saved.installation.id);toast('설치 정보를 저장했습니다.');}return true;
+ case 'installation-filter':if(values.from&&values.to&&values.from>values.to)throw new Error('종료일은 시작일 이후로 설정해 주세요.');features.installationFilters=Object.fromEntries(Object.entries(values).filter(([,v])=>v));features.installationPage=1;await renderInstallations();return true;
+ case 'installation-form':values.version=features.installation.version;values.category_id=features.installation.category_id??null;{const saved=await api('/installations'+(features.installation.id?'/'+features.installation.id:''),{method:features.installation.id?'PUT':'POST',body:values});await renderView();await installationDialog(saved.installation.id);toast('설치 정보를 저장했습니다.');}return true;
  case 'folder-form':await api('/folders',{method:'POST',body:{...values,parent_id:features.folder}});modal.close();await renderLibrary();toast('분류를 만들었습니다.');return true;
  case 'manual-form':if(features.folderDepth!==3)throw new Error('소분류를 선택해 주세요.');if(form.elements.file.files[0].size>10*1024*1024)throw new Error('파일은 10MB 이하로 등록해 주세요.');await api('/manuals?'+new URLSearchParams({folder:features.folder??''}),{method:'POST',body:new FormData(form)});modal.close();await renderLibrary();toast('자료를 등록했습니다.');return true;
  case 'installation-upload':{const file=form.elements.file.files[0];if(file.size>10*1024*1024)throw new Error('파일은 10MB 이하로 첨부해 주세요.');await api('/installations/'+features.installation.id+'/files',{method:'POST',body:new FormData(form)});await installationDialog(features.installation.id);await renderView();toast('첨부자료를 등록했습니다.');}return true;
