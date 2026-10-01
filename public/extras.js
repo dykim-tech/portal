@@ -1,5 +1,5 @@
 export function createExtras(ctx) {
-  const { api, esc, state, features, canEdit, openDialog, input, toast, fmt, pageHead, renderItems, renderInstallations, renderView } = ctx;
+  const { api, esc, state, features, canEdit, openDialog, input, toast, fmt, pageHead, renderItems, renderInstallations, renderView, modal } = ctx;
   const cache = { items: [], installations: [] };
   const work = { customer: null, customers: [], page: 1, filters: {}, selected: null, selectedCustomer: null };
   const report = { from: '', to: '' };
