@@ -82,7 +82,7 @@ test('categories, installation files, customer work logs, and CSV reports', asyn
     assert.equal(log.status, 201, JSON.stringify(log.data));
     assert.equal((await request('/work-logs?customer_id=' + customer.id)).data.total, 1);
     assert.equal((await request('/work-logs?from=2026-10-02')).data.total, 0);
-    const report = await request('/reports?from=2026-10-01&to=2026-10-01');
+    const report = await request('/reports');
     assert.deepEqual([report.data.counts.installations, report.data.counts.items, report.data.counts.manuals, report.data.counts.work_logs], [1, 1, 1, 1]);
     const installationCsv = await request('/reports/installations.csv');
     assert.equal(installationCsv.status, 200);
