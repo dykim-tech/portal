@@ -76,7 +76,7 @@ document.addEventListener('submit',async event=>{
     if(await extras.submit(form,values))return;
     if(await featureSubmit(form,values))return;
     if(form.id==='auth-form'){const result=await api('/auth/'+(form.dataset.setup==='true'?'setup':'login'),{method:'POST',body:values});await signedIn(result.user);}
-    if(form.id==='filter-form'){if(values.from&&values.to&&values.from>values.to)throw new Error('종료일은 시작일 이후로 설정해 주세요.');state.filters=Object.fromEntries(Object.entries(values).filter(([,v])=>v));state.page=1;await renderItems();}
+    if(form.id==='filter-form'){if(values.from&&values.to&&values.from>values.to)throw new Error('종료일은 시작일 이후로 설정해 주세요.');const categoryId=state.filters.category_id;state.filters=Object.fromEntries(Object.entries(values).filter(([,v])=>v));if(categoryId)state.filters.category_id=categoryId;state.page=1;await renderItems();}
     if(form.id==='item-form'){values.quantity=Number(values.quantity);values.reminder_days=Number(values.reminder_days);values.version=state.item.version;const saved=await api('/items'+(state.item.id?'/'+state.item.id:''),{method:state.item.id?'PUT':'POST',body:values});await renderView();await itemDialog(saved.item.id);await refreshCount();toast('자산 정보를 저장했습니다.');}
     if(form.id==='upload-form'){const file=form.elements.file.files[0];if(file.size>10*1024*1024)throw new Error('파일은 10MB 이하로 첨부해 주세요.');await api('/items/'+state.item.id+'/files',{method:'POST',body:new FormData(form)});await itemDialog(state.item.id);await renderView();toast('첨부자료를 등록했습니다.');}
     if(form.id==='user-form'){values.active=state.editUser.id?form.elements.active.checked:true;await api('/users'+(state.editUser.id?'/'+state.editUser.id:''),{method:state.editUser.id?'PUT':'POST',body:values});modal.close();await renderUsers();toast('사용자 정보를 저장했습니다.');}
@@ -147,7 +147,7 @@ async function featureAction(action,id,button){
 }
 async function featureSubmit(form,values){
  switch(form.id){
- case 'installation-filter':if(values.from&&values.to&&values.from>values.to)throw new Error('종료일은 시작일 이후로 설정해 주세요.');features.installationFilters=Object.fromEntries(Object.entries(values).filter(([,v])=>v));features.installationPage=1;await renderInstallations();return true;
+ case 'installation-filter':if(values.from&&values.to&&values.from>values.to)throw new Error('종료일은 시작일 이후로 설정해 주세요.');const categoryId=features.installationFilters.category_id;features.installationFilters=Object.fromEntries(Object.entries(values).filter(([,v])=>v));if(categoryId)features.installationFilters.category_id=categoryId;features.installationPage=1;await renderInstallations();return true;
  case 'installation-form':values.version=features.installation.version;{const saved=await api('/installations'+(features.installation.id?'/'+features.installation.id:''),{method:features.installation.id?'PUT':'POST',body:values});await renderView();await installationDialog(saved.installation.id);toast('설치 정보를 저장했습니다.');}return true;
  case 'folder-form':await api('/folders',{method:'POST',body:{...values,parent_id:features.folder}});modal.close();await renderLibrary();toast('분류를 만들었습니다.');return true;
  case 'manual-form':if(features.folderDepth!==3)throw new Error('소분류를 선택해 주세요.');if(form.elements.file.files[0].size>10*1024*1024)throw new Error('파일은 10MB 이하로 등록해 주세요.');await api('/manuals?'+new URLSearchParams({folder:features.folder??''}),{method:'POST',body:new FormData(form)});modal.close();await renderLibrary();toast('자료를 등록했습니다.');return true;
