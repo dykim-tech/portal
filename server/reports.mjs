@@ -70,12 +70,13 @@ export function registerReports(app, { db }) {
     const categoryPaths = paths(db.prepare('SELECT id,parent_id,name FROM record_categories').all());
     const folderPaths = paths(db.prepare('SELECT id,parent_id,name FROM folders').all());
     let header, sql, args, project;
+    let sequence = 0;
     if (kind === 'installations') {
       const p = predicate('i.installed_on', dates);
-      header = ['설치일','대분류 / 중분류 / 소분류','설치명','고객·사업장','위치','담당자','제품·버전','상태','메모','첨부자료 수'];
+      header = ['구분','고객사','제품명','세부내용','수량','설치시작일','설치종료일','담당자','설치엔지니어','비고','대분류 / 중분류 / 소분류','상태','첨부자료 수'];
       sql = `SELECT i.*,(SELECT COUNT(*) FROM installation_files f WHERE f.installation_id=i.id) file_count FROM installations i ${p.where} ORDER BY i.installed_on DESC,i.id DESC`;
       args = p.args;
-      project = row => [row.installed_on,categoryPaths.get(row.category_id) ?? '미분류',row.name,row.customer,row.location,row.engineer,row.product_version,row.status,row.notes,row.file_count];
+      project = row => [++sequence,row.customer,row.name,row.product_version,row.quantity,row.installed_on,row.completed_on,row.contact,row.engineer,row.notes,categoryPaths.get(row.category_id) ?? '미분류',row.status,row.file_count];
     } else if (kind === 'items') {
       const p = predicate("date(i.updated_at,'+9 hours')", dates);
       header = ['최근 수정','대분류 / 중분류 / 소분류','유형','자산명','관리번호','상태','수량','위치','담당자','시리얼','관리 기한','설명','첨부자료 수'];
