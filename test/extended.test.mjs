@@ -4,6 +4,7 @@ import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createPortal } from '../server/app.mjs';
+import { openDatabase } from '../server/db.mjs';
 
 test('categories, installation files, customer work logs, and CSV reports', async () => {
   const origin = 'http://localhost:3101';
@@ -42,9 +43,15 @@ test('categories, installation files, customer work logs, and CSV reports', asyn
     const assetLeaf = await makeCategory('items', '스위치', assetMid);
     assert.equal((await request('/categories?scope=items')).data.categories.length, 3);
     assert.equal((await request('/installations', 'POST', { name: '잘못된 분류', customer: 'A', installed_on: '2026-10-01', status: 'installed', category_id: assetLeaf })).status, 404);
-    const created = await request('/installations', 'POST', { name: '서버 설치', customer: '테스트 고객', installed_on: '2026-10-01', status: 'installed', category_id: installLeaf, notes: '완료' });
+    const created = await request('/installations', 'POST', { name: 'Petra Cipher', customer: '테스트 고객', product_version: 'Petra Cipher for Linux', quantity: 2, installed_on: '2026-10-01', completed_on: '2026-10-02', contact: '고객 담당자', engineer: '설치 엔지니어', status: 'installed', category_id: installLeaf, notes: '완료' });
     assert.equal(created.status, 201, JSON.stringify(created.data));
     const installationId = created.data.installation.id;
+    assert.equal(created.data.installation.quantity, 2);
+    assert.equal(created.data.installation.completed_on, '2026-10-02');
+    assert.equal(created.data.installation.contact, '고객 담당자');
+    assert.equal((await request('/installations?q=고객 담당자')).data.total, 1);
+    assert.equal((await request('/installations', 'POST', { name: '검증', customer: 'A', installed_on: '2026-10-01', completed_on: '2026-09-30', quantity: 1, status: 'installed' })).status, 400);
+    assert.equal((await request('/installations', 'POST', { name: '검증', customer: 'A', installed_on: '2026-10-01', quantity: 0, status: 'installed' })).status, 400);
     assert.equal((await request('/installations?category_id=' + installMajor)).data.total, 1);
     assert.equal((await request('/installations?category_id=' + serverMid)).data.total, 1);
     const upload = new FormData();
@@ -80,7 +87,9 @@ test('categories, installation files, customer work logs, and CSV reports', asyn
     const installationCsv = await request('/reports/installations.csv');
     assert.equal(installationCsv.status, 200);
     assert.match(installationCsv.data, /고객사 \/ 서버 \/ 신규 설치/);
-    assert.match(installationCsv.data, /서버 설치/);
+    assert.match(installationCsv.data, /Petra Cipher for Linux/);
+    assert.match(installationCsv.data, /설치종료일/);
+    assert.match(installationCsv.data, /고객 담당자/);
     const formulaCustomer = await request('/customers', 'POST', { name: '=2+2' });
     const formulaLog = await request('/work-logs', 'POST', { customer_id: formulaCustomer.data.customer.id, work_date: '2026-10-01', title: 'CSV 검사', status: 'done' });
     assert.equal(formulaLog.status, 201);
@@ -103,7 +112,30 @@ test('categories, installation files, customer work logs, and CSV reports', asyn
   const reopened = createPortal({ dataDir, origin });
   try {
     assert.equal(reopened.db.prepare('SELECT COUNT(*) n FROM installations').get().n, 1);
+    assert.equal(reopened.db.prepare('SELECT quantity FROM installations').get().quantity, 2);
     assert.equal(reopened.db.prepare('SELECT COUNT(*) n FROM work_logs').get().n, 2);
     assert.equal(reopened.db.prepare('SELECT COUNT(*) n FROM record_categories').get().n, 6);
   } finally { reopened.db.close(); }
+});
+
+test('older installation records keep their data when sheet columns are added', () => {
+  const dataDir = mkdtempSync(join(tmpdir(), 'portal-install-migrate-'));
+  const legacy = openDatabase(dataDir);
+  legacy.exec(`CREATE TABLE installations (
+    id INTEGER PRIMARY KEY,name TEXT NOT NULL,customer TEXT NOT NULL,location TEXT NOT NULL DEFAULT '',installed_on TEXT NOT NULL,
+    engineer TEXT NOT NULL DEFAULT '',product_version TEXT NOT NULL DEFAULT '',status TEXT NOT NULL,notes TEXT NOT NULL DEFAULT '',
+    version INTEGER NOT NULL DEFAULT 1,created_by INTEGER NOT NULL REFERENCES users(id),updated_by INTEGER NOT NULL REFERENCES users(id),created_at TEXT NOT NULL,updated_at TEXT NOT NULL);
+    INSERT INTO users(id,name,email,password,role,created_at) VALUES(1,'기존 관리자','old@example.test','unused','admin','2026-01-01T00:00:00Z');
+    INSERT INTO installations(name,customer,installed_on,status,created_by,updated_by,created_at,updated_at)
+    VALUES('기존 제품','기존 고객','2026-01-01','installed',1,1,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z');`);
+  legacy.close();
+  const portal = createPortal({ dataDir });
+  try {
+    const row = portal.db.prepare('SELECT * FROM installations WHERE id=1').get();
+    assert.equal(row.name, '기존 제품');
+    assert.equal(row.customer, '기존 고객');
+    assert.equal(row.quantity, 1);
+    assert.equal(row.completed_on, null);
+    assert.equal(row.contact, '');
+  } finally { portal.db.close(); }
 });

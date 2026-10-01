@@ -33,3 +33,20 @@
 [data-theme=dark] .classified-sidebar{background:#15261c}
 @media(max-width:1100px){.classified-panel{grid-template-columns:175px minmax(0,1fr)}.report-stats{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:720px){.classified-panel{display:block}.classified-sidebar{border-right:0;border-bottom:1px solid var(--line);max-height:220px}.folder-tree{display:block;max-height:220px;border-right:0;border-bottom:1px solid var(--line)}.report-grid{grid-template-columns:1fr;padding:0 14px 14px}.report-stats{padding:14px;gap:10px}.report-filters{display:grid;grid-template-columns:1fr 1fr}.report-filters label{min-width:0}}
+
+/* Installation register follows the customer's spreadsheet columns. */
+.installation-sheet{min-width:1500px;table-layout:fixed;border-collapse:collapse}
+.installation-sheet th{background:#c8efcf;color:#18372b;font-weight:700;text-align:center;white-space:normal;border:1px solid #a4c9ac;padding:13px 10px}
+.installation-sheet td{border:1px solid var(--line);white-space:normal;vertical-align:top;line-height:1.5;padding:13px 10px;overflow-wrap:anywhere}
+.installation-sheet .installation-number{text-align:center}
+.installation-sheet .installation-text{white-space:pre-wrap}
+.installation-sheet th:nth-child(1){width:60px}
+.installation-sheet th:nth-child(2){width:270px}
+.installation-sheet th:nth-child(3){width:145px}
+.installation-sheet th:nth-child(4){width:230px}
+.installation-sheet th:nth-child(5){width:65px}
+.installation-sheet th:nth-child(6),.installation-sheet th:nth-child(7){width:120px}
+.installation-sheet th:nth-child(8){width:105px}
+.installation-sheet th:nth-child(9){width:135px}
+.installation-sheet th:nth-child(10){width:250px}
+[data-theme=dark] .installation-sheet th{background:#315641;color:#e2f4e8;border-color:#54715c}
