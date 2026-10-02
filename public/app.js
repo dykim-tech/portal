@@ -86,7 +86,7 @@ document.addEventListener('submit',async event=>{
 });
 Object.assign(labels,{planned:'설치 예정',installed:'설치 완료',maintenance:'유지보수',closed:'종료'});
 let pdfDoc=null,pdfPage=1,pdfRender=null;
-const features={installationPage:1,installationFilters:{},installation:null,folder:null,folderDepth:0,libraryPage:1,libraryQuery:''};
+const features={installationPage:1,installationFilters:{},installation:null,folder:null,folderDepth:0,libraryPage:1,libraryQuery:'',expandedFolders:new Set()};
 const extras=createExtras({api,esc,state,features,canEdit,openDialog,input,toast,fmt,pageHead,renderItems,renderInstallations,renderView,modal,labels});
 applyTheme();
 try{const result=await api('/auth/me');if(result.user)await signedIn(result.user);else authPage(result.setupRequired);}catch(error){root.innerHTML=`<main class="error-page"><h1>포털에 연결할 수 없습니다</h1><p>${esc(error.message)}</p><button onclick="location.reload()">다시 시도</button></main>`;root.querySelector('button').removeAttribute('onclick');root.querySelector('button').addEventListener('click',()=>location.reload());}
@@ -144,10 +144,18 @@ async function installationDialog(id){
 }
 function fileSize(n){return n>=1048576?(n/1048576).toFixed(1)+' MB':(n/1024).toFixed(1)+' KB';}
 function fileType(name){return name.includes('.')?name.split('.').pop().slice(0,8).toUpperCase():'FILE';}
-function folderTree(tree,parent=null,depth=0){return tree.filter(f=>f.parent_id===parent).map(f=>`<button class="folder-tree-link ${features.folder===f.id?'selected':''}" data-action="folder" data-id="${f.id}"><span>${'　'.repeat(depth)}▱</span>${esc(f.name)}</button>${folderTree(tree,f.id,depth+1)}`).join('');}
+function folderTree(tree,parent=null,depth=0){
+ return tree.filter(f=>f.parent_id===parent).map(f=>{
+  const hasChildren=tree.some(child=>child.parent_id===f.id),expanded=features.expandedFolders.has(f.id);
+  const toggle=hasChildren?`<button class="folder-tree-toggle" data-action="folder-toggle" data-id="${f.id}" data-name="${esc(f.name)}" aria-expanded="${expanded}" aria-controls="folder-children-${f.id}" aria-label="${esc(f.name)} ${expanded?'접기':'펼치기'}">${expanded?'−':'＋'}</button>`:'<span class="folder-tree-toggle-spacer" aria-hidden="true"></span>';
+  return `<div class="folder-tree-row ${features.folder===f.id?'selected':''}" style="padding-left:${Math.min(depth,3)*12}px">${toggle}<button class="folder-tree-link" data-action="folder" data-id="${f.id}"><span aria-hidden="true">▱</span>${esc(f.name)}</button></div>${hasChildren?`<div id="folder-children-${f.id}" role="group" ${expanded?'':'hidden'}>${folderTree(tree,f.id,depth+1)}</div>`:''}`;
+ }).join('');
+}
 async function renderLibrary(){
  const d=await api('/library?'+new URLSearchParams({folder:features.folder??'',q:features.libraryQuery,page:features.libraryPage}));if(state.view!=='library')return;
  features.folderDepth=d.breadcrumbs.length;
+ const folderById=new Map(d.tree.map(f=>[f.id,f]));
+ for(let current=folderById.get(features.folder);current?.parent_id!=null;current=folderById.get(current.parent_id))features.expandedFolders.add(current.parent_id);
  const controls=canEdit()?`<div class="head-actions">${features.folderDepth<3?`<button data-action="new-folder">＋ ${['대분류','중분류','소분류'][features.folderDepth]} 등록</button>`:''}${features.folderDepth===3?'<button class="primary" data-action="upload-manual">＋ 자료 등록</button>':''}</div>`:'';
  document.querySelector('#content').innerHTML=pageHead('DOCUMENT LIBRARY','자료 관리','대분류 · 중분류 · 소분류 순서로 자료를 정리하고 미리 확인하세요.',controls)+`<section class="panel explorer"><aside class="folder-tree"><div class="folder-tree-title">자료 분류</div><button class="folder-tree-link ${features.folder===null?'selected':''}" data-action="folder"><span>▱</span>전체 자료</button>${folderTree(d.tree)}</aside><div class="explorer-main"><div class="explorer-toolbar"><nav class="breadcrumbs" aria-label="폴더 경로"><button data-action="folder">전체 자료</button>${d.breadcrumbs.map(f=>`<span>/</span><button data-action="folder" data-id="${f.id}">${esc(f.name)}</button>`).join('')}</nav><form id="library-search" class="library-search"><input name="q" aria-label="현재 폴더 검색" placeholder="현재 폴더에서 검색" value="${esc(features.libraryQuery)}"><button>검색</button></form></div><div class="table-wrap"><table class="file-table"><thead><tr><th>이름</th><th>유형</th><th>크기</th><th>등록일</th><th>관리</th></tr></thead><tbody>${d.folders.map(f=>`<tr><td><button class="file-name" data-action="folder" data-id="${f.id}"><span class="folder-icon" aria-hidden="true">▰</span>${esc(f.name)}</button></td><td>${['대분류','중분류','소분류'][features.folderDepth]??'폴더'}</td><td>—</td><td>${fmt(f.created_at)}</td><td>${canEdit()?`<button class="small danger" data-action="delete-folder" data-id="${f.id}">삭제</button>`:''}</td></tr>`).join('')}${d.files.map(f=>`<tr><td><button class="file-name" data-action="preview" data-id="${f.id}"><span class="extension-icon">${esc(fileType(f.name))}</span><span>${esc(f.name)}<span class="secondary-line">${esc(f.uploaded_by_name)}</span></span></button></td><td>${esc(fileType(f.name))}</td><td>${fileSize(f.size)}</td><td>${fmt(f.created_at)}</td><td><div class="file-actions"><a href="/api/manuals/${f.id}/download">다운로드</a>${canEdit()?`<button class="small danger" data-action="delete-manual" data-id="${f.id}">삭제</button>`:''}</div></td></tr>`).join('')}</tbody></table></div>${!d.folders.length&&!d.files.length?'<div class="empty"><h3>표시할 폴더나 파일이 없습니다</h3><p>새 폴더를 만들거나 자료를 등록하세요.<br>검색 중이라면 검색어를 바꿔 보세요.</p></div>':''}<div class="footer-row"><span>폴더 ${d.folders.length}개 · 파일 ${d.total}개</span><div class="pager"><button class="small" data-action="library-prev" ${d.page<=1?'disabled':''}>이전</button><span>${d.page} / ${Math.max(1,Math.ceil(d.total/50))}</span><button class="small" data-action="library-next" ${d.page>=Math.ceil(d.total/50)?'disabled':''}>다음</button></div></div></div></section><p class="help-line">대분류→중분류→소분류에서 자료를 등록합니다. 파일당 최대 500MB · PDF, PNG, JPG, GIF, WebP, 텍스트 파일 미리보기 지원. Office·HWP 등 그 외 파일은 다운로드로 확인하세요.</p>`;
 }
@@ -165,6 +173,17 @@ async function featureAction(action,id,button){
  case 'new-installation':case 'installation':await installationDialog(id);return true;
  case 'reset-installations':features.installationFilters={};features.installationPage=1;await renderInstallations();return true;
  case 'installation-prev':case 'installation-next':features.installationPage+=action.endsWith('prev')?-1:1;await renderInstallations();return true;
+ case 'folder-toggle':{
+  const folderId=Number(id),children=document.getElementById('folder-children-'+folderId);
+  if(!children)return true;
+  const expanded=!features.expandedFolders.has(folderId);
+  if(expanded)features.expandedFolders.add(folderId);else features.expandedFolders.delete(folderId);
+  children.hidden=!expanded;
+  button.textContent=expanded?'−':'＋';
+  button.setAttribute('aria-expanded',String(expanded));
+  button.setAttribute('aria-label',button.dataset.name+' '+(expanded?'접기':'펼치기'));
+  return true;
+ }
  case 'folder':features.folder=id?Number(id):null;features.libraryPage=1;features.libraryQuery='';await renderLibrary();return true;
  case 'library-prev':case 'library-next':features.libraryPage+=action.endsWith('prev')?-1:1;await renderLibrary();return true;
  case 'new-folder':if(features.folderDepth>=3)throw new Error('소분류 아래에는 분류를 더 만들 수 없습니다.');openDialog(['대분류','중분류','소분류'][features.folderDepth]+' 등록',`<form id="folder-form">${input('name','분류명 *','','required maxlength="100"')}<div class="form-actions"><button class="primary">분류 등록</button></div></form>`);return true;
