@@ -1,6 +1,6 @@
 import { extname } from 'node:path';
 import { transaction, koreaDate } from './db.mjs';
-import { writeUploadChunks, discardUpload, deleteUploadChunks, getStoredFile, sendStoredFile, uploadHeader } from './uploads.mjs';
+import { writeUploadChunks, discardUpload, deleteUploadChunks, getStoredFile, sendStoredFile, uploadHeader, assertUploadSize } from './uploads.mjs';
 import { initializeCategories, registerCategories, categoryInput, categoryDescendants } from './categories.mjs';
 const now=()=>new Date().toISOString();
 const fail=(status,message)=>Object.assign(new Error(message),{status});
@@ -81,6 +81,7 @@ export function registerFeatures(app,{db,requireRole,upload}){
  app.post('/api/installations/:id/files',edit,(req,res,next)=>{installation(req.params.id);next();},upload,(req,res)=>{
    if(!req.file)throw fail(400,'첨부할 파일을 선택해 주세요.');
    try {
+     assertUploadSize(req.file);
      const record=installation(req.params.id),name=filename(req.file.originalname);
      transaction(db,()=>{
        const result=db.prepare('INSERT INTO installation_files(installation_id,name,size,bytes,preview_type,uploaded_by,created_at) VALUES(?,?,?,?,?,?,?)').run(record.id,name,req.file.size,Buffer.alloc(0),previewType(name,uploadHeader(req.file.path)),req.user.id,now());
@@ -97,6 +98,7 @@ export function registerFeatures(app,{db,requireRole,upload}){
  app.post('/api/manuals',edit,(req,res,next)=>{getFolder(req.query.folder);next();},upload,(req,res)=>{
    if(!req.file)throw fail(400,'등록할 파일을 선택해 주세요.');
    try {
+     assertUploadSize(req.file);
      const folder=getFolder(req.query.folder),name=filename(req.file.originalname);
      const fileId=transaction(db,()=>{
        const result=db.prepare('INSERT INTO manuals(folder_id,name,size,bytes,preview_type,uploaded_by,created_at) VALUES(?,?,?,?,?,?,?)').run(folder?.id??null,name,req.file.size,Buffer.alloc(0),previewType(name,uploadHeader(req.file.path)),req.user.id,now());
