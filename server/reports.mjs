@@ -85,7 +85,7 @@ export function registerReports(app, { db }) {
       project = row => [row.updated_at,categoryPaths.get(row.category_id) ?? '미분류',row.category,row.name,row.asset_code,row.status,row.quantity,row.location,row.owner,row.serial,row.due_date,row.description,row.file_count];
     } else if (kind === 'manuals') {
       const p = predicate("date(m.created_at,'+9 hours')", dates);
-      header = ['등록일','대분류 / 중분류 / 소분류','파일명','크기(byte)','등록자'];
+      header = ['등록일','대분류 / 중분류','파일명','크기(byte)','등록자'];
       sql = `SELECT m.id,m.folder_id,m.name,m.size,m.created_at,u.name uploader FROM manuals m JOIN users u ON u.id=m.uploaded_by ${p.where} ORDER BY m.created_at DESC,m.id DESC`;
       args = p.args;
       project = row => [row.created_at,folderPaths.get(row.folder_id) ?? '미분류',row.name,row.size,row.uploader];

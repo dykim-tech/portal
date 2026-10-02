@@ -36,11 +36,32 @@ export function initializeFeatures(db){
  if(!columns.has('quantity'))db.exec('ALTER TABLE installations ADD COLUMN quantity INTEGER NOT NULL DEFAULT 1');
  if(!columns.has('contact'))db.exec("ALTER TABLE installations ADD COLUMN contact TEXT NOT NULL DEFAULT ''");
  initializeCategories(db);
+ flattenLibraryFolders(db);
+}
+// Keep folder IDs and file references while reducing legacy paths to two levels.
+export function flattenLibraryFolders(db){
+ const folders=db.prepare('SELECT id,parent_id,name FROM folders ORDER BY id').all();
+ const byId=new Map(folders.map(folder=>[folder.id,folder]));
+ transaction(db,()=>{
+  for(const folder of folders){
+   const path=[folder];let parent=byId.get(folder.parent_id);
+   while(parent){path.unshift(parent);parent=byId.get(parent.parent_id);}
+   if(path.length<=2)continue;
+   const root=path[0],base=path.slice(1).map(part=>part.name).join(' · ');
+   let name=base.slice(0,100),suffix=1;
+   while(db.prepare('SELECT id FROM folders WHERE parent_id=? AND name=? AND id<>?').get(root.id,name,folder.id)){
+    const ending=` (${++suffix})`;name=base.slice(0,100-ending.length)+ending;
+   }
+   db.prepare('UPDATE folders SET parent_id=?,name=? WHERE id=?').run(root.id,name,folder.id);
+  }
+ });
 }
 export function registerFeatures(app,{db,requireRole,upload}){
  const edit=requireRole(['admin','editor']);
  registerCategories(app,{db,requireRole});
  const getFolder=value=>{if(value==null||value==='')return null;const folder=db.prepare('SELECT * FROM folders WHERE id=?').get(id(value));if(!folder)throw fail(404,'폴더를 찾을 수 없습니다.');return folder;};
+ const middleFolder=value=>{const folder=getFolder(value);if(!folder||!folder.parent_id||getFolder(folder.parent_id).parent_id)throw fail(400,'중분류를 선택해 주세요.');return folder;};
+ const folderName=value=>{const name=val(value,'분류명',100,true);if(/[\\/\u0000-\u001f\u007f]/.test(name)||['.','..'].includes(name))throw fail(400,'분류 이름에 경로 문자나 제어 문자를 사용할 수 없습니다.');return name;};
  const installation=value=>{const result=db.prepare('SELECT * FROM installations WHERE id=?').get(id(value));if(!result)throw fail(404,'설치 정보를 찾을 수 없습니다.');return result;};
  function installationData(body){
   if(!['planned','installed','maintenance','closed'].includes(body.status))throw fail(400,'설치 상태를 확인해 주세요.');
@@ -75,7 +96,8 @@ export function registerFeatures(app,{db,requireRole,upload}){
    const where="folder_id IS ? AND name LIKE ? ESCAPE '\\'";
    res.json({folder,breadcrumbs,tree:db.prepare('SELECT id,parent_id,name FROM folders ORDER BY name').all(),folders:db.prepare("SELECT * FROM folders WHERE parent_id IS ? AND name LIKE ? ESCAPE '\\' ORDER BY name").all(folderId,pattern),files:db.prepare(`SELECT m.id,m.folder_id,m.name,m.size,m.preview_type,m.created_at,u.name AS uploaded_by_name FROM manuals m JOIN users u ON u.id=m.uploaded_by WHERE ${where.replace('name LIKE','m.name LIKE')} ORDER BY m.name LIMIT 50 OFFSET ?`).all(folderId,pattern,(page-1)*50),total:db.prepare(`SELECT COUNT(*) n FROM manuals WHERE ${where}`).get(folderId,pattern).n,page});
  });
- app.post('/api/folders',edit,(req,res)=>{const parent=getFolder(req.body.parent_id);const name=val(req.body.name,'폴더명',100,true);if(/[\\/]/.test(name)||['.','..'].includes(name))throw fail(400,'폴더 이름에 경로 문자를 사용할 수 없습니다.');let depth=0,cursor=parent;while(cursor){depth++;cursor=cursor.parent_id?getFolder(cursor.parent_id):null;}if(depth>=3)throw fail(400,'분류는 대분류·중분류·소분류 3단계까지 만들 수 있습니다.');const result=db.prepare('INSERT INTO folders(parent_id,name,created_at) VALUES(?,?,?)').run(parent?.id??null,name,now());res.status(201).json({id:Number(result.lastInsertRowid)});});
+ app.post('/api/folders',edit,(req,res)=>{const parent=getFolder(req.body.parent_id),name=folderName(req.body.name);if(parent?.parent_id)throw fail(400,'분류는 대분류·중분류 2단계까지 만들 수 있습니다.');const result=db.prepare('INSERT INTO folders(parent_id,name,created_at) VALUES(?,?,?)').run(parent?.id??null,name,now());res.status(201).json({id:Number(result.lastInsertRowid)});});
+ app.put('/api/folders/:id',edit,(req,res)=>{const folder=getFolder(req.params.id),name=folderName(req.body.name);db.prepare('UPDATE folders SET name=? WHERE id=?').run(name,folder.id);res.json({folder:getFolder(folder.id)});});
  app.delete('/api/folders/:id',edit,(req,res)=>{const folder=getFolder(req.params.id);if(db.prepare('SELECT id FROM folders WHERE parent_id=? LIMIT 1').get(folder.id)||db.prepare('SELECT id FROM manuals WHERE folder_id=? LIMIT 1').get(folder.id))throw fail(409,'비어 있는 폴더만 삭제할 수 있습니다.');db.prepare('DELETE FROM folders WHERE id=?').run(folder.id);res.json({ok:true});});
  const installationFile=value=>{const file=getStoredFile(db,'installation_files',id(value));if(!file)throw fail(404,'첨부자료를 찾을 수 없습니다.');return file;};
  app.post('/api/installations/:id/files',edit,(req,res,next)=>{installation(req.params.id);next();},upload,(req,res)=>{
@@ -95,11 +117,11 @@ export function registerFeatures(app,{db,requireRole,upload}){
  app.get('/api/installation-files/:id/preview',(req,res)=>{const file=installationFile(req.params.id);if(!file.preview_type)throw fail(415,'이 파일은 다운로드하여 확인해 주세요.');res.set({'Content-Type':file.preview_type,'Content-Disposition':`inline; filename="preview${extname(file.name).replace(/[^.a-zA-Z0-9]/g,'')}"`,'Content-Security-Policy':"sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'self'"});sendStoredFile(db,'installation_files',file,res);});
  app.delete('/api/installation-files/:id',edit,(req,res)=>{const file=installationFile(req.params.id);transaction(db,()=>{deleteUploadChunks(db,'installation_files',file.id);db.prepare('DELETE FROM installation_files WHERE id=?').run(file.id);db.prepare('UPDATE installations SET version=version+1,updated_by=?,updated_at=? WHERE id=?').run(req.user.id,now(),file.parent_id);});res.json({ok:true});});
 
- app.post('/api/manuals',edit,(req,res,next)=>{getFolder(req.query.folder);next();},upload,(req,res)=>{
+ app.post('/api/manuals',edit,(req,res,next)=>{middleFolder(req.query.folder);next();},upload,(req,res)=>{
    if(!req.file)throw fail(400,'등록할 파일을 선택해 주세요.');
    try {
      assertUploadSize(req.file);
-     const folder=getFolder(req.query.folder),name=filename(req.file.originalname);
+     const folder=middleFolder(req.query.folder),name=filename(req.file.originalname);
      const fileId=transaction(db,()=>{
        const result=db.prepare('INSERT INTO manuals(folder_id,name,size,bytes,preview_type,uploaded_by,created_at) VALUES(?,?,?,?,?,?,?)').run(folder?.id??null,name,req.file.size,Buffer.alloc(0),previewType(name,uploadHeader(req.file.path)),req.user.id,now());
        const fileId=Number(result.lastInsertRowid);
@@ -110,7 +132,15 @@ export function registerFeatures(app,{db,requireRole,upload}){
    } finally { discardUpload(req.file); }
  });
  const manual=value=>{const file=getStoredFile(db,'manuals',id(value));if(!file)throw fail(404,'자료를 찾을 수 없습니다.');return file;};
- app.get('/api/manuals/:id',(req,res)=>{const file=manual(req.params.id);res.json({file:{id:file.id,name:file.name,size:file.size,preview_type:file.preview_type,created_at:file.created_at}});});
+ app.get('/api/manuals/:id',(req,res)=>{const file=manual(req.params.id);res.json({file:{id:file.id,folder_id:file.parent_id,name:file.name,size:file.size,preview_type:file.preview_type,created_at:file.created_at}});});
+ app.put('/api/manuals/:id',edit,(req,res)=>{
+   const file=manual(req.params.id),name=val(req.body.name,'자료명',240,true);
+   if(/[\\/\u0000-\u001f\u007f]/.test(name)||['.','..'].includes(name))throw fail(400,'자료 이름에 경로 문자나 제어 문자를 사용할 수 없습니다.');
+   if(extname(name).toLowerCase()!==extname(file.name).toLowerCase())throw fail(400,'파일 확장자는 변경할 수 없습니다.');
+   const folderId=req.body.folder_id===undefined||String(req.body.folder_id??'')===String(file.parent_id??'')?file.parent_id:middleFolder(req.body.folder_id).id;
+   db.prepare('UPDATE manuals SET name=?,folder_id=? WHERE id=?').run(name,folderId,file.id);
+   res.json({ok:true});
+ });
  app.get('/api/manuals/:id/download',(req,res)=>{const file=manual(req.params.id);res.set({'Content-Type':'application/octet-stream','Content-Disposition':`attachment; filename="download"; filename*=UTF-8''${encodeURIComponent(file.name)}`});sendStoredFile(db,'manuals',file,res);});
  app.get('/api/manuals/:id/preview',(req,res)=>{
    const file=manual(req.params.id);if(!file.preview_type)throw fail(415,'이 파일은 다운로드하여 확인해 주세요.');

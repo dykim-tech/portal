@@ -68,12 +68,11 @@ test('categories, installation files, customer work logs, and CSV reports', asyn
 
     const large = (await request('/folders', 'POST', { name: '제품' })).data.id;
     const middle = (await request('/folders', 'POST', { name: '서버', parent_id: large })).data.id;
-    const small = (await request('/folders', 'POST', { name: '설치 안내', parent_id: middle })).data.id;
-    assert.equal((await request('/folders', 'POST', { name: '너무 깊음', parent_id: small })).status, 400);
+    assert.equal((await request('/folders', 'POST', { name: '너무 깊음', parent_id: middle })).status, 400);
     const manual = new FormData();
     manual.append('file', new Blob(['설치 순서']), '안내.txt');
-    assert.equal((await request('/manuals?folder=' + small, 'POST', manual)).status, 201);
-    assert.equal((await request('/library?folder=' + small)).data.total, 1);
+    assert.equal((await request('/manuals?folder=' + middle, 'POST', manual)).status, 201);
+    assert.equal((await request('/library?folder=' + middle)).data.total, 1);
 
     const customers = await request('/customers');
     const customer = customers.data.customers.find(row => row.name === '테스트 고객');
