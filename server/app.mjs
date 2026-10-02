@@ -5,6 +5,7 @@ import { initializeWork, registerWork } from './work.mjs';
 import { registerReports } from './reports.mjs';
 import helmet from 'helmet';
 import multer from 'multer';
+import { initializeUploadChunks, createUploadMiddleware, writeUploadChunks, discardUpload, deleteUploadChunks, getStoredFile, sendStoredFile, assertUploadSize } from './uploads.mjs';
 import { randomBytes, scrypt as scryptCallback, timingSafeEqual, createHash } from 'node:crypto';
 import { promisify } from 'node:util';
 import { existsSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs';
@@ -64,6 +65,7 @@ export function createPortal(options = {}) {
   const dataDir = resolve(options.dataDir ?? process.env.DATA_DIR ?? './data');
   const db = openDatabase(dataDir);
   initializeFeatures(db);
+  initializeUploadChunks(db);
   initializeWork(db);
   const app = express();
   const origin = new URL(options.origin ?? process.env.APP_ORIGIN ?? 'http://localhost:3000').origin;
@@ -200,28 +202,31 @@ export function createPortal(options = {}) {
     });
     scanDeadlines(db);res.json({item:item(req.params.id)});
   });
-  const upload=multer({storage:multer.memoryStorage(),limits:{fileSize:10*1024*1024,files:1,fields:0}});
-  app.post('/api/items/:id/files',requireRole(['admin','editor']), (req,res,next)=>{item(req.params.id);next();},upload.single('file'),(req,res)=>{
+  const upload=createUploadMiddleware(dataDir);
+  app.post('/api/items/:id/files',requireRole(['admin','editor']), (req,res,next)=>{item(req.params.id);next();},upload,(req,res)=>{
     if(!req.file) throw fail(400,'첨부할 파일을 선택해 주세요.');
-    // Multer exposes multipart filenames as latin1; modern browsers send UTF-8.
-    const decoded=Buffer.from(req.file.originalname,'latin1').toString('utf8');
-    const name=text((decoded.includes('\uFFFD')?req.file.originalname:decoded).replace(/[\\/\u0000-\u001f\u007f]/g,'_'),'파일명',240,true);
-    transaction(db,()=>{
-      const total=db.prepare('SELECT COALESCE(SUM(size),0) AS n FROM files WHERE item_id=?').get(req.params.id).n;
-      if(total+req.file.size>50*1024*1024) throw fail(400,'물품별 첨부자료는 총 50MB까지 저장할 수 있습니다.');
-      db.prepare('INSERT INTO files(item_id,name,size,bytes,uploaded_by,created_at) VALUES(?,?,?,?,?,?)').run(req.params.id,name,req.file.size,req.file.buffer,req.user.id,now());
-      db.prepare('UPDATE items SET updated_at=?,updated_by=?,version=version+1 WHERE id=?').run(now(),req.user.id,req.params.id);
-      history(req.params.id,req.user.id,'자료 등록',name);
-    }); res.status(201).json({ok:true});
+    try {
+      assertUploadSize(req.file);
+      // Multer exposes multipart filenames as latin1; modern browsers send UTF-8.
+      const decoded=Buffer.from(req.file.originalname,'latin1').toString('utf8');
+      const name=text((decoded.includes('\uFFFD')?req.file.originalname:decoded).replace(/[\\/\u0000-\u001f\u007f]/g,'_'),'파일명',240,true);
+      transaction(db,()=>{
+        const result=db.prepare('INSERT INTO files(item_id,name,size,bytes,uploaded_by,created_at) VALUES(?,?,?,?,?,?)').run(req.params.id,name,req.file.size,Buffer.alloc(0),req.user.id,now());
+        writeUploadChunks(db,'files',Number(result.lastInsertRowid),req.file);
+        db.prepare('UPDATE items SET updated_at=?,updated_by=?,version=version+1 WHERE id=?').run(now(),req.user.id,req.params.id);
+        history(req.params.id,req.user.id,'자료 등록',name);
+      });
+      res.status(201).json({ok:true});
+    } finally { discardUpload(req.file); }
   });
-  app.get('/api/files/:id',(req,res)=>{const file=db.prepare('SELECT * FROM files WHERE id=?').get(req.params.id);if(!file)throw fail(404,'파일을 찾을 수 없습니다.');res.set({'Content-Type':'application/octet-stream','Content-Disposition':`attachment; filename="download"; filename*=UTF-8''${encodeURIComponent(file.name)}`}).send(Buffer.from(file.bytes));});
+  app.get('/api/files/:id',(req,res)=>{const file=getStoredFile(db,'files',req.params.id);if(!file)throw fail(404,'파일을 찾을 수 없습니다.');res.set({'Content-Type':'application/octet-stream','Content-Disposition':`attachment; filename="download"; filename*=UTF-8''${encodeURIComponent(file.name)}`});sendStoredFile(db,'files',file,res);});
   app.delete('/api/files/:id',requireRole(['admin','editor']),(req,res)=>{
     const file=db.prepare('SELECT id,item_id,name FROM files WHERE id=?').get(req.params.id);if(!file)throw fail(404,'파일을 찾을 수 없습니다.');
-    transaction(db,()=>{db.prepare('DELETE FROM files WHERE id=?').run(file.id);db.prepare('UPDATE items SET updated_at=?,updated_by=?,version=version+1 WHERE id=?').run(now(),req.user.id,file.item_id);history(file.item_id,req.user.id,'자료 삭제',file.name);});res.json({ok:true});
+    transaction(db,()=>{deleteUploadChunks(db,'files',file.id);db.prepare('DELETE FROM files WHERE id=?').run(file.id);db.prepare('UPDATE items SET updated_at=?,updated_by=?,version=version+1 WHERE id=?').run(now(),req.user.id,file.item_id);history(file.item_id,req.user.id,'자료 삭제',file.name);});res.json({ok:true});
   });
   app.get('/api/notifications',(req,res)=>{scanDeadlines(db);res.json({notifications:db.prepare('SELECT n.*,i.asset_code FROM notifications n JOIN items i ON i.id=n.item_id WHERE n.user_id=? ORDER BY n.id DESC LIMIT 200').all(req.user.id),unread:db.prepare('SELECT COUNT(*) AS n FROM notifications WHERE user_id=? AND read_at IS NULL').get(req.user.id).n});});
   app.post('/api/notifications/read',(req,res)=>{if(req.body.id)db.prepare('UPDATE notifications SET read_at=? WHERE id=? AND user_id=?').run(now(),integer(req.body.id,'알림',1,Number.MAX_SAFE_INTEGER),req.user.id);else db.prepare('UPDATE notifications SET read_at=? WHERE user_id=? AND read_at IS NULL').run(now(),req.user.id);res.json({ok:true});});
-  registerFeatures(app, { db, requireRole });
+  registerFeatures(app, { db, requireRole, upload });
   registerWork(app, { db, requireRole });
   registerReports(app, { db });
   app.use('/api',(_req,_res,next)=>next(fail(404,'요청한 기능을 찾을 수 없습니다.')));
@@ -229,7 +234,7 @@ export function createPortal(options = {}) {
   app.use(express.static(resolve(dirname(fileURLToPath(import.meta.url)),'../public'),{etag:true}));
   app.use((err,_req,res,_next)=>{
     if(err.code==='SQLITE_CONSTRAINT_UNIQUE' || /UNIQUE constraint failed/.test(err.message))return res.status(409).json({error:'같은 이름이나 관리번호가 이미 등록되어 있습니다.'});
-    if(err instanceof multer.MulterError)return res.status(400).json({error:err.code==='LIMIT_FILE_SIZE'?'파일은 10MB 이하로 첨부해 주세요.':'첨부 요청이 올바르지 않습니다.'});
+    if(err instanceof multer.MulterError)return res.status(400).json({error:err.code==='LIMIT_FILE_SIZE'?'파일은 500MB 이하로 첨부해 주세요.':'첨부 요청이 올바르지 않습니다.'});
     const status=err.status??500;if(status>=500)console.error(err);
     res.status(status).json({error:status>=500?'처리 중 오류가 발생했습니다. 다시 시도해 주세요.':err.message});
   });
