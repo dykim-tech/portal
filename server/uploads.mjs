@@ -4,6 +4,10 @@ import { join } from 'node:path';
 import { Readable } from 'node:stream';
 
 export const MAX_FILE_SIZE = 500 * 1024 * 1024;
+
+export function assertUploadSize(file) {
+  if (file.size > MAX_FILE_SIZE) throw Object.assign(new Error('파일은 500MB 이하로 첨부해 주세요.'), { status: 400 });
+}
 const CHUNK_SIZE = 1024 * 1024;
 const tables = new Set(['files', 'manuals', 'installation_files']);
 
@@ -32,7 +36,7 @@ export function createUploadMiddleware(dataDir) {
       catch (error) { console.warn('Could not remove an old upload temporary file:', error); }
     }
   }
-  return multer({ dest: tempDir, limits: { fileSize: MAX_FILE_SIZE, files: 1, fields: 0 } }).single('file');
+  return multer({ dest: tempDir, limits: { fileSize: MAX_FILE_SIZE + 1, files: 1, fields: 0 } }).single('file');
 }
 
 export function uploadHeader(path, size = 16) {
