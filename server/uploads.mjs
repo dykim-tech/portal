@@ -76,7 +76,8 @@ export function deleteUploadChunks(db, scope, fileId) {
 export function getStoredFile(db, scope, fileId) {
   table(scope);
   const preview = scope === 'files' ? 'NULL AS preview_type' : 'preview_type';
-  return db.prepare(`SELECT id,name,size,${preview},length(bytes) AS inline_size FROM ${scope} WHERE id=?`).get(fileId);
+  const parent = scope === 'files' ? 'item_id' : scope === 'manuals' ? 'folder_id' : 'installation_id';
+  return db.prepare(`SELECT id,name,size,created_at,${preview},${parent} AS parent_id,length(bytes) AS inline_size FROM ${scope} WHERE id=?`).get(fileId);
 }
 
 export function sendStoredFile(db, scope, file, res) {
