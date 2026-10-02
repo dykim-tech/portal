@@ -20,7 +20,7 @@ flowchart LR
 
 - 화면: public/app.js, public/extras.js, public/styles.css. 별도 프런트엔드 빌드 없이 Express가 파일을 제공합니다.
 - API·인증: server/app.mjs. 설치·자료는 server/features.mjs, 분류는 server/categories.mjs, 고객·업무일지는 server/work.mjs, 리포트는 server/reports.mjs가 담당합니다.
-- 저장소: server/db.mjs가 Node.js 내장 SQLite를 열고 기본 테이블을 만듭니다. 첨부파일도 별도 파일 폴더가 아니라 SQLite의 BLOB 데이터로 저장합니다. Windows 기본 운영에 별도 SQLite 프로그램이나 Docker 설치는 필요하지 않습니다.
+- 저장소: server/db.mjs가 Node.js 내장 SQLite를 열고 기본 테이블을 만듭니다. 첨부파일은 SQLite의 BLOB 데이터로 저장합니다. 새 업로드는 메모리 사용을 줄이기 위해 작은 조각으로 나누어 저장하며, 기존 BLOB 첨부도 계속 읽습니다. Windows 기본 운영에 별도 SQLite 프로그램이나 Docker 설치는 필요하지 않습니다.
 - 실행: server/index.mjs가 HTTP 서버와 1분 간격 기한 확인을 시작합니다. Windows 자동 실행에서는 server/windows-start.mjs가 로그를 파일에 기록하며 index.mjs를 불러옵니다.
 
 ## 3. 데이터 저장 위치
@@ -29,8 +29,9 @@ flowchart LR
 
 | 위치 | 저장 내용 | GitHub 전송 |
 |---|---|---|
-| F:\ChatGPT\DYKIM-PORTAL\data\portal.sqlite | 사용자, 설치·자료·자산·업무일지, 알림, 첨부파일 등 운영 데이터 | 안 함 |
+| F:\ChatGPT\DYKIM-PORTAL\data\portal.sqlite | 사용자, 설치·자료·자산·업무일지, 알림, 첨부파일과 새 파일 조각 등 운영 데이터 | 안 함 |
 | 같은 data 폴더의 portal.sqlite-wal, portal.sqlite-shm | SQLite 실행 중 만들어질 수 있는 보조 파일 | 안 함 |
+| F:\ChatGPT\DYKIM-PORTAL\data\upload-tmp\ | 업로드 중 사용하는 임시 파일. 완료 후 삭제 | 안 함 |
 | F:\ChatGPT\DYKIM-PORTAL\data\server.log | Windows 백그라운드 서버 실행 기록 | 안 함 |
 | F:\ChatGPT\DYKIM-PORTAL\data\setup-token.txt | 최초 관리자 생성 전의 일회용 설정 코드. 생성 후 삭제 | 안 함 |
 | F:\ChatGPT\DYKIM-PORTAL\backups\ | npm run backup으로 만든 날짜별 SQLite 백업 | 안 함 |
@@ -62,6 +63,7 @@ erDiagram
 | installations, installation_files | 고객사별 설치 현황과 건별 첨부자료 |
 | record_categories | 자산의 대분류→중분류→소분류와 기존 설치 분류 이력. 새 설치 정보는 분류 없이 등록 |
 | folders, manuals | 자료 관리의 3단계 탐색기 폴더와 업로드 파일 |
+| file_chunks | 새 첨부파일을 1MB 단위로 담는 공용 저장 테이블. scope와 file_id로 원본 기록을 식별 |
 | items, files, history, notifications | 자산, 첨부파일, 변경 이력, 관리 기한 알림 |
 | customers, work_logs | 고객 목록과 고객별 날짜·제목·담당자·상태·업무 내용 |
 
@@ -94,7 +96,7 @@ erDiagram
 
 ## 7. 파일·알림·운영 제한
 
-- 자료 및 설치·자산 첨부는 파일당 최대 10MB입니다. 설치/자산 한 건의 첨부 합계는 각각 최대 50MB입니다.
+- 자료 관리와 설치·자산 첨부는 모두 파일당 최대 500MB입니다. 기존 설치/자산 건당 50MB 합계 제한은 제거했습니다. 업로드는 `data/upload-tmp/`에 임시 저장한 뒤 SQLite의 `file_chunks` 테이블에 1MB 단위로 기록합니다. 기존 첨부는 원래 BLOB에서 읽으며, 백업에는 두 형식 모두 포함됩니다.
 - PDF, PNG, JPG, GIF, WebP, 텍스트 파일은 미리보기를 지원합니다. Office/HWP 등은 다운로드하여 확인합니다.
 - 자산 관리 기한은 서버 시작 시와 실행 중 매분 한국 시간 기준으로 검사합니다. 알림은 포털 안에 표시되며 이메일·문자 발송은 구현되어 있지 않습니다.
 - 현재 구조는 로컬 SQLite를 사용하는 단일 서버·소규모 공유 환경을 대상으로 합니다. PC 전원이 꺼지면 포털에도 접속할 수 없습니다.
@@ -103,7 +105,7 @@ erDiagram
 
 `scripts/windows-install.ps1`은 작업 스케줄러에 `DYKIM Personal Portal` 작업을 등록합니다. Windows 로그인 시 현재 사용자 권한으로 Node.js를 직접 실행하므로 평상시에는 명령 창을 열어 둘 필요가 없습니다. 작업은 프로젝트 폴더를 작업 디렉터리로 사용하며, 실행 기록은 `data/server.log`에 남깁니다. PC가 꺼져 있거나 해당 Windows 사용자가 로그인하지 않으면 기본 로컬 서버에 접속할 수 없습니다. 기동·재시작·포트 충돌·로그 확인 절차는 [운영 및 장애 대응 문서](OPERATIONS.md)에 있습니다.
 
-프로젝트 폴더에서 npm run backup을 실행하면 backups/에 portal-날짜.sqlite 형식의 온라인 백업이 생성됩니다. 이 백업에는 계정 정보와 업로드 파일도 포함됩니다. 백업 생성은 현재 수동이며 자동 일정과 외부 보관은 별도로 구성해야 합니다. 복구할 때는 서버를 완전히 중지하고 기존 data 폴더를 별도 보관한 뒤, 선택한 백업을 새 data 폴더의 portal.sqlite로 배치합니다. 과거 WAL/SHM 파일을 복구본과 섞지 않습니다.
+프로젝트 폴더에서 npm run backup을 실행하면 backups/에 portal-날짜.sqlite 형식의 온라인 백업이 생성됩니다. 이 백업에는 계정 정보와 기존·신규 형식의 업로드 파일도 포함됩니다. 500MB 파일을 올릴 때는 임시 파일과 SQLite/WAL 증가분을 위한 디스크 공간이 추가로 필요하며, 백업 파일도 커집니다. 백업 생성은 현재 수동이며 자동 일정과 외부 보관은 별도로 구성해야 합니다. 복구할 때는 서버를 완전히 중지하고 기존 data 폴더를 별도 보관한 뒤, 선택한 백업을 새 data 폴더의 portal.sqlite로 배치합니다. 과거 WAL/SHM 파일을 복구본과 섞지 않습니다.
 
 ## 9. GitHub의 역할과 업데이트 흐름
 
