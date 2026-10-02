@@ -34,12 +34,19 @@ if (@(Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyCo
 }
 $user = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
 $arguments = if (Test-Path -LiteralPath (Join-Path $portalRoot '.env')) { '--env-file=.env server/windows-start.mjs' } else { 'server/windows-start.mjs' }
-$action = New-ScheduledTaskAction -Execute $node -Argument $arguments -WorkingDirectory $portalRoot
-$trigger = New-ScheduledTaskTrigger -AtLogOn -User $user
-# S4U starts Node in a non-interactive session without storing a password.
-$principal = New-ScheduledTaskPrincipal -UserId $user -LogonType S4U -RunLevel Limited
-$settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -MultipleInstances IgnoreNew -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
-Register-ScheduledTask -TaskName $taskName -Description 'Start the personal portal directly without a console window.' -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
+$existingAction = if ($previousTask) { @($previousTask.Actions)[0] } else { $null }
+$reuseTask = $existingAction -and
+    $existingAction.Execute -ieq $node -and
+    $existingAction.Arguments -eq $arguments -and
+    $existingAction.WorkingDirectory -ieq $portalRoot
+if (-not $reuseTask) {
+    $action = New-ScheduledTaskAction -Execute $node -Argument $arguments -WorkingDirectory $portalRoot
+    $trigger = New-ScheduledTaskTrigger -AtLogOn -User $user
+    # S4U starts Node in a non-interactive session without storing a password.
+    $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType S4U -RunLevel Limited
+    $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1) -MultipleInstances IgnoreNew -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+    Register-ScheduledTask -TaskName $taskName -Description 'Start the personal portal directly without a console window.' -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
+}
 Start-ScheduledTask -TaskName $taskName
 for ($attempt = 0; $attempt -lt 15; $attempt++) {
     Start-Sleep -Seconds 1

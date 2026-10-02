@@ -138,3 +138,63 @@ test('older installation records keep their data when sheet columns are added', 
     assert.equal(row.contact, '');
   } finally { portal.db.close(); }
 });
+
+test('record deletion removes attachments while customer removal preserves linked history', async () => {
+  const origin = 'http://localhost:3102';
+  const dataDir = mkdtempSync(join(tmpdir(), 'portal-delete-'));
+  const portal = createPortal({ dataDir, origin });
+  const server = portal.app.listen(0, '127.0.0.1');
+  await new Promise(resolve => server.once('listening', resolve));
+  const base = 'http://127.0.0.1:' + server.address().port;
+  let cookie = '';
+  async function request(path, method = 'GET', body, session = cookie) {
+    const response = await fetch(base + '/api' + path, {
+      method,
+      headers: { Origin: origin, 'X-Portal-Request': '1', Cookie: session, ...(body instanceof FormData ? {} : { 'Content-Type': 'application/json' }) },
+      ...(body !== undefined ? { body: body instanceof FormData ? body : JSON.stringify(body) } : {})
+    });
+    return { status: response.status, data: response.headers.get('content-type')?.includes('json') ? await response.json() : await response.text(), headers: response.headers };
+  }
+  try {
+    const setup = await request('/auth/setup', 'POST', { token: readFileSync(portal.tokenPath, 'utf8'), name: '관리자', email: 'delete-admin@example.test', password: 'test-password-1234' });
+    cookie = setup.headers.get('set-cookie').split(';')[0];
+    const viewer = await request('/users', 'POST', { name: '조회자', email: 'delete-viewer@example.test', role: 'viewer', password: 'test-password-1234' });
+    const viewerLogin = await request('/auth/login', 'POST', { email: 'delete-viewer@example.test', password: 'test-password-1234' });
+    const viewerCookie = viewerLogin.headers.get('set-cookie').split(';')[0];
+    const created = await request('/installations', 'POST', { name: '제품', customer: '기록 고객', installed_on: '2026-10-01', status: 'installed' });
+    const installationId = created.data.installation.id;
+    const attachment = new FormData();
+    attachment.append('file', new Blob(['설치 첨부']), '설치.txt');
+    assert.equal((await request('/installations/' + installationId + '/files', 'POST', attachment)).status, 201);
+    const fileId = (await request('/installations/' + installationId)).data.files[0].id;
+    const customerId = (await request('/customers')).data.customers.find(row => row.name === '기록 고객').id;
+    const log = await request('/work-logs', 'POST', { customer_id: customerId, work_date: '2026-10-01', title: '설치 확인', status: 'done' });
+    assert.equal((await request('/installations/' + installationId, 'DELETE', undefined, viewerCookie)).status, 403);
+    assert.equal((await request('/customers/' + customerId, 'DELETE')).data.archived, true);
+    assert.equal((await request('/customers')).data.customers.some(row => row.id === customerId), false);
+    const restored = await request('/customers', 'POST', { name: '기록 고객' });
+    assert.equal(restored.data.customer.id, customerId);
+    assert.equal((await request('/customers/' + customerId, 'DELETE')).data.archived, true);
+    assert.equal((await request('/work-logs/' + log.data.log.id)).data.log.customer_name, '기록 고객');
+    assert.equal((await request('/installations/' + installationId)).status, 200);
+    assert.equal((await request('/work-logs/' + log.data.log.id, 'DELETE')).status, 200);
+    assert.equal((await request('/installations/' + installationId, 'DELETE')).status, 200);
+    assert.equal((await request('/installation-files/' + fileId + '/download')).status, 404);
+    assert.equal(portal.db.prepare("SELECT COUNT(*) n FROM file_chunks WHERE scope='installation_files' AND file_id=?").get(fileId).n, 0);
+    const asset = await request('/items', 'POST', { name: '장비', asset_code: 'DELETE-001', category: 'it', status: 'active', quantity: 1, reminder_days: 7 });
+    const assetFile = new FormData();
+    assetFile.append('file', new Blob(['자산 첨부']), '자산.txt');
+    assert.equal((await request('/items/' + asset.data.item.id + '/files', 'POST', assetFile)).status, 201);
+    const assetFileId = (await request('/items/' + asset.data.item.id)).data.files[0].id;
+    assert.equal((await request('/items/' + asset.data.item.id, 'DELETE')).status, 200);
+    assert.equal(portal.db.prepare("SELECT COUNT(*) n FROM file_chunks WHERE scope='files' AND file_id=?").get(assetFileId).n, 0);
+    assert.equal((await request('/users/' + viewer.data.user.id, 'DELETE')).status, 200);
+    assert.equal((await request('/users/' + setup.data.user.id, 'DELETE')).status, 400);
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+    portal.db.close();
+  }
+  const reopened = createPortal({ dataDir, origin });
+  try { assert.equal(reopened.db.prepare("SELECT COUNT(*) n FROM customers WHERE name='기록 고객' AND active=0").get().n, 1); }
+  finally { reopened.db.close(); }
+});

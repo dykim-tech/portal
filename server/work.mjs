@@ -59,10 +59,16 @@ export function registerWork(app, { db, requireRole }) {
     };
   };
   app.get('/api/customers', (_req, res) => {
-    res.json({ customers: db.prepare('SELECT c.*,(SELECT COUNT(*) FROM work_logs w WHERE w.customer_id=c.id) log_count FROM customers c ORDER BY c.name').all() });
+    res.json({ customers: db.prepare('SELECT c.*,(SELECT COUNT(*) FROM work_logs w WHERE w.customer_id=c.id) log_count FROM customers c WHERE c.active=1 ORDER BY c.name').all() });
   });
   app.post('/api/customers', edit, (req, res) => {
     const name = text(req.body.name, '고객명', 150, true), contact = text(req.body.contact, '연락처', 200), notes = text(req.body.notes, '메모', 2000), stamp = now();
+    const existing = db.prepare('SELECT id,active FROM customers WHERE name=?').get(name);
+    if (existing) {
+      if (existing.active) throw fail(409, '이미 등록된 고객입니다.');
+      db.prepare('UPDATE customers SET active=1,contact=?,notes=?,updated_at=? WHERE id=?').run(contact, notes, stamp, existing.id);
+      return res.json({ customer: customer(existing.id) });
+    }
     const result = db.prepare('INSERT INTO customers(name,contact,notes,created_at,updated_at) VALUES(?,?,?,?,?)').run(name, contact, notes, stamp, stamp);
     res.status(201).json({ customer: customer(result.lastInsertRowid) });
   });
@@ -71,6 +77,14 @@ export function registerWork(app, { db, requireRole }) {
     if (typeof req.body.active !== 'boolean') throw fail(400, '사용 여부를 확인해 주세요.');
     db.prepare('UPDATE customers SET name=?,contact=?,notes=?,active=?,updated_at=? WHERE id=?').run(name, contact, notes, Number(req.body.active), now(), c.id);
     res.json({ customer: customer(c.id) });
+  });
+  app.delete('/api/customers/:id', edit, (req, res) => {
+    const c = customer(req.params.id);
+    const linked = db.prepare('SELECT id FROM work_logs WHERE customer_id=? LIMIT 1').get(c.id)
+      || db.prepare('SELECT id FROM installations WHERE customer=? COLLATE NOCASE LIMIT 1').get(c.name);
+    if (linked) db.prepare('UPDATE customers SET active=0,updated_at=? WHERE id=?').run(now(), c.id);
+    else db.prepare('DELETE FROM customers WHERE id=?').run(c.id);
+    res.json({ ok: true, archived: Boolean(linked) });
   });
   app.get('/api/work-logs', (req, res) => {
     const clauses = [], params = [], q = text(req.query.q, '검색어', 200);
@@ -106,5 +120,10 @@ export function registerWork(app, { db, requireRole }) {
     db.prepare('UPDATE work_logs SET customer_id=?,work_date=?,title=?,owner=?,status=?,content=?,version=version+1,updated_by=?,updated_at=? WHERE id=?')
       .run(...Object.values(values), req.user.id, now(), original.id);
     res.json({ log: log(original.id) });
+  });
+  app.delete('/api/work-logs/:id', edit, (req, res) => {
+    const row = log(req.params.id);
+    db.prepare('DELETE FROM work_logs WHERE id=?').run(row.id);
+    res.json({ ok: true });
   });
 }

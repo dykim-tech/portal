@@ -170,6 +170,15 @@ export function createPortal(options = {}) {
     });
     res.json({ok:true});
   });
+  app.delete('/api/users/:id', requireRole(['admin']), (req,res) => {
+    const id=integer(req.params.id,'사용자',1,Number.MAX_SAFE_INTEGER);
+    if(id===req.user.id) throw fail(400,'본인 계정은 삭제할 수 없습니다.');
+    if(!db.prepare('SELECT id FROM users WHERE id=?').get(id)) throw fail(404,'사용자를 찾을 수 없습니다.');
+    const references=[['items','created_by'],['items','updated_by'],['files','uploaded_by'],['history','actor_id'],['notifications','user_id'],['installations','created_by'],['installations','updated_by'],['installation_files','uploaded_by'],['manuals','uploaded_by'],['work_logs','created_by'],['work_logs','updated_by']];
+    if(references.some(([table,column])=>db.prepare(`SELECT 1 FROM ${table} WHERE ${column}=? LIMIT 1`).get(id))) throw fail(409,'작성·수정 이력이 있는 계정은 삭제할 수 없습니다. 계정을 비활성화해 주세요.');
+    db.prepare('DELETE FROM users WHERE id=?').run(id);
+    res.json({ok:true});
+  });
   app.get('/api/items', (req,res) => {
     const clauses=[], params=[];
     const q=text(req.query.q,'검색어',200);
@@ -201,6 +210,14 @@ export function createPortal(options = {}) {
       if(data.due_date!==original.due_date || data.status==='retired') db.prepare('DELETE FROM notifications WHERE item_id=?').run(original.id);
     });
     scanDeadlines(db);res.json({item:item(req.params.id)});
+  });
+  app.delete('/api/items/:id',requireRole(['admin','editor']),(req,res)=>{
+    const current=item(req.params.id);
+    transaction(db,()=>{
+      for(const file of db.prepare('SELECT id FROM files WHERE item_id=?').all(current.id)) deleteUploadChunks(db,'files',file.id);
+      db.prepare('DELETE FROM items WHERE id=?').run(current.id);
+    });
+    res.json({ok:true});
   });
   const upload=createUploadMiddleware(dataDir);
   app.post('/api/items/:id/files',requireRole(['admin','editor']), (req,res,next)=>{item(req.params.id);next();},upload,(req,res)=>{
