@@ -5,7 +5,7 @@ import { initializeWork, registerWork } from './work.mjs';
 import { registerReports } from './reports.mjs';
 import helmet from 'helmet';
 import multer from 'multer';
-import { initializeUploadChunks, createUploadMiddleware, writeUploadChunks, discardUpload, deleteUploadChunks, getStoredFile, sendStoredFile } from './uploads.mjs';
+import { initializeUploadChunks, createUploadMiddleware, writeUploadChunks, discardUpload, deleteUploadChunks, getStoredFile, sendStoredFile, assertUploadSize } from './uploads.mjs';
 import { randomBytes, scrypt as scryptCallback, timingSafeEqual, createHash } from 'node:crypto';
 import { promisify } from 'node:util';
 import { existsSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs';
@@ -206,6 +206,7 @@ export function createPortal(options = {}) {
   app.post('/api/items/:id/files',requireRole(['admin','editor']), (req,res,next)=>{item(req.params.id);next();},upload,(req,res)=>{
     if(!req.file) throw fail(400,'첨부할 파일을 선택해 주세요.');
     try {
+      assertUploadSize(req.file);
       // Multer exposes multipart filenames as latin1; modern browsers send UTF-8.
       const decoded=Buffer.from(req.file.originalname,'latin1').toString('utf8');
       const name=text((decoded.includes('\uFFFD')?req.file.originalname:decoded).replace(/[\\/\u0000-\u001f\u007f]/g,'_'),'파일명',240,true);
