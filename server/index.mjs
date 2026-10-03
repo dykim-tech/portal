@@ -58,10 +58,16 @@ async function restoreInPlace({ path, restoreId }) {
 }
 
 portal = createPortal({ dataDir, backupDir, onRestore: restoreInPlace });
+portal.pruneBackups();
 await listen();
 console.log(`Portal: ${process.env.APP_ORIGIN ?? 'http://localhost:3000'}`);
 console.log(`First-run setup code, if needed: ${portal.tokenPath}`);
-const timer = setInterval(() => { try { portal.tick(); } catch (error) { console.error('Deadline scan failed', error); } }, 60000);
+const timer = setInterval(() => {
+  try {
+    portal.tick();
+    if (!restoring) portal.pruneBackups();
+  } catch (error) { console.error('Periodic portal task failed', error); }
+}, 60000);
 function close() {
   clearInterval(timer);
   if (server?.listening) server.close(() => { portal.db.close(); process.exit(0); });

@@ -262,7 +262,7 @@ export function createPortal(options = {}) {
   registerFeatures(app, { db, requireRole, upload });
   registerWork(app, { db, requireRole });
   registerReports(app, { db });
-  registerBackups(app, { db, backupDir, requireRole, maintenance, onRestore: options.onRestore });
+  const pruneBackups = registerBackups(app, { db, backupDir, requireRole, maintenance, onRestore: options.onRestore });
   app.use('/api',(_req,_res,next)=>next(fail(404,'요청한 기능을 찾을 수 없습니다.')));
   for (const dir of ['build','cmaps','standard_fonts','wasm']) app.use('/vendor/pdfjs/'+dir, express.static(resolve(dirname(fileURLToPath(import.meta.url)), '../node_modules/pdfjs-dist',dir)));
   app.use(express.static(resolve(dirname(fileURLToPath(import.meta.url)),'../public'),{etag:true}));
@@ -274,6 +274,6 @@ export function createPortal(options = {}) {
     res.status(status).json({error:status>=500?'처리 중 오류가 발생했습니다. 다시 시도해 주세요.':err.message});
   });
   scanDeadlines(db);
-  return { app, db, tokenPath, tick:()=>{ if (!maintenance.restoring) scanDeadlines(db); }, instanceId, maintenance };
+  return { app, db, tokenPath, tick:()=>{ if (!maintenance.restoring) scanDeadlines(db); }, pruneBackups, instanceId, maintenance };
 }
 

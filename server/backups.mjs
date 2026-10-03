@@ -6,6 +6,7 @@ import { randomBytes } from 'node:crypto';
 const fail = (status, message) => Object.assign(new Error(message), { status });
 const backupName = /^portal-[A-Za-z0-9-]+\.sqlite$/;
 const stamp = () => new Date().toISOString().replace(/[:.]/g, '-');
+const retentionMs = 7 * 24 * 60 * 60 * 1000;
 const coreTables = ['users', 'items', 'installations', 'folders', 'manuals', 'work_logs'];
 const legacyTables = ['users', 'sessions', 'login_attempts', 'items', 'files', 'history', 'notifications', 'installations', 'folders', 'manuals'];
 const preservedTables = ['users', 'items', 'files', 'history', 'installations', 'folders', 'manuals'];
@@ -24,13 +25,39 @@ export function backupPath(backupDir, name) {
   return path;
 }
 
+function backupCreatedAt(name, info) {
+  const match = /^portal-(?:pre-restore-)?(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z(?:-[a-f0-9]{6})?\.sqlite$/.exec(name);
+  if (!match) return info.mtimeMs;
+  const parsed = Date.parse(`${match[1]}T${match[2]}:${match[3]}:${match[4]}.${match[5]}Z`);
+  return Number.isFinite(parsed) ? parsed : info.mtimeMs;
+}
+
+export function pruneExpiredBackups(backupDir, now = Date.now(), protectedNames = new Set()) {
+  mkdirSync(backupDir, { recursive: true });
+  const removed = [];
+  for (const name of readdirSync(backupDir)) {
+    if (!backupName.test(name) || protectedNames.has(name)) continue;
+    const path = join(backupDir, name), info = lstatSync(path);
+    if (!info.isFile() || backupCreatedAt(name, info) > now - retentionMs) continue;
+    try {
+      rmSync(path);
+      removed.push(name);
+      for (const suffix of ['-wal', '-shm', '.partial-wal', '.partial-shm']) {
+        const sidecar = path + suffix;
+        if (existsSync(sidecar) && lstatSync(sidecar).isFile()) rmSync(sidecar);
+      }
+    } catch (error) { console.warn(`Expired backup cleanup failed: ${name}`, error); }
+  }
+  return removed;
+}
+
 export function listBackups(backupDir) {
   mkdirSync(backupDir, { recursive: true });
   return readdirSync(backupDir)
     .filter(name => backupName.test(name))
     .flatMap(name => {
       const path = join(backupDir, name), info = lstatSync(path);
-      return info.isFile() ? [{ name, size: info.size, created_at: info.mtime.toISOString() }] : [];
+      return info.isFile() ? [{ name, size: info.size, created_at: new Date(backupCreatedAt(name, info)).toISOString() }] : [];
     })
     .sort((left, right) => right.created_at.localeCompare(left.created_at) || right.name.localeCompare(left.name));
 }
@@ -124,21 +151,27 @@ export function restoreDatabaseFile(dataDir, sourcePath) {
 export function registerBackups(app, { db, backupDir, requireRole, maintenance, onRestore }) {
   const admin = requireRole(['admin']);
   let busy = false;
-  app.get('/api/backups', admin, (_req, res) => res.json({ backups: listBackups(backupDir) }));
+  const downloading = new Set();
+  const prune = () => { if (!busy && !maintenance.restoring) pruneExpiredBackups(backupDir, Date.now(), downloading); };
+  app.get('/api/backups', admin, (_req, res) => { prune(); res.json({ backups: listBackups(backupDir) }); });
   app.post('/api/backups', admin, async (_req, res) => {
     if (busy) throw fail(409, '백업 작업이 진행 중입니다.');
     busy = true;
     try { res.status(201).json({ backup: await createBackup(db, backupDir) }); }
-    finally { busy = false; }
+    finally { busy = false; prune(); }
   });
   app.get('/api/backups/:name/download', admin, (req, res) => {
+    prune();
     const path = backupPath(backupDir, req.params.name);
+    downloading.add(req.params.name);
+    res.once('close', () => downloading.delete(req.params.name));
     res.download(path, req.params.name);
   });
   app.post('/api/backups/:name/restore', admin, (req, res) => {
     if (!onRestore) throw fail(501, '이 실행 방식에서는 화면 복구를 사용할 수 없습니다.');
     if (busy || maintenance.restoring) throw fail(409, '백업 또는 복구 작업이 진행 중입니다.');
     if (req.body?.confirm !== req.params.name) throw fail(400, '선택한 백업 파일을 다시 확인해 주세요.');
+    prune();
     const path = backupPath(backupDir, req.params.name);
     verifyRestoreCandidate(path);
     const restoreId = randomBytes(12).toString('hex');
@@ -147,4 +180,5 @@ export function registerBackups(app, { db, backupDir, requireRole, maintenance, 
     res.once('finish', () => setImmediate(() => onRestore({ path, restoreId }).catch(error => console.error('Restore failed', error))));
     res.json({ ok: true, restore_id: restoreId });
   });
+  return prune;
 }

@@ -1,11 +1,33 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { copyFileSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { createPortal } from '../server/app.mjs';
-import { backupPath, createBackup, listBackups, restoreDatabaseFile, verifyRestoreCandidate } from '../server/backups.mjs';
+import { backupPath, createBackup, listBackups, pruneExpiredBackups, restoreDatabaseFile, verifyRestoreCandidate } from '../server/backups.mjs';
+
+test('backups expire after seven days while active downloads and unrelated files are preserved', () => {
+  const root = mkdtempSync(join(tmpdir(), 'portal-backup-retention-'));
+  const now = Date.parse('2026-10-10T12:00:00.000Z');
+  const old = 'portal-2026-10-01T12-00-00-000Z.sqlite';
+  const boundary = 'portal-pre-restore-2026-10-03T12-00-00-000Z-abcdef.sqlite';
+  const fresh = 'portal-2026-10-09T12-00-00-000Z.sqlite';
+  try {
+    for (const name of [old, boundary, fresh, 'notes.txt', 'portal.sqlite']) writeFileSync(join(root, name), 'test');
+    writeFileSync(join(root, old + '-wal'), 'sidecar');
+    utimesSync(join(root, fresh), new Date('2026-01-01'), new Date('2026-01-01'));
+    const first = pruneExpiredBackups(root, now, new Set([old]));
+    assert.deepEqual(first, [boundary]);
+    assert.equal(existsSync(join(root, old)), true);
+    assert.equal(existsSync(join(root, fresh)), true);
+    assert.equal(listBackups(root).find(row => row.name === fresh).created_at, '2026-10-09T12:00:00.000Z');
+    assert.deepEqual(pruneExpiredBackups(root, now), [old]);
+    assert.equal(existsSync(join(root, old + '-wal')), false);
+    assert.equal(existsSync(join(root, 'notes.txt')), true);
+    assert.equal(existsSync(join(root, 'portal.sqlite')), true);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
 
 test('admin can create, list and download backups; restore requires explicit selection', async () => {
   const root = mkdtempSync(join(tmpdir(), 'portal-backup-api-'));
