@@ -1,5 +1,5 @@
 export function createExtras(ctx) {
-  const { api, esc, state, features, canEdit, openDialog, input, toast, fmt, pageHead, renderItems, renderInstallations, renderView, modal } = ctx;
+  const { api, esc, state, features, canEdit, openDialog, input, toast, fmt, pageHead, renderItems, renderInstallations, renderView, modal, listingQuery, decorateListing } = ctx;
   const cache = { items: [], installations: [] };
   const work = { customer: null, customers: [], page: 1, filters: {}, selected: null, selectedCustomer: null };
   const report = { from: '', to: '' };
@@ -57,7 +57,7 @@ export function createExtras(ctx) {
   async function renderWork() {
     const [customers, result] = await Promise.all([
       api('/customers'),
-      api('/work-logs?' + new URLSearchParams({ ...work.filters, customer_id: work.customer ?? '', page: work.page }))
+      api('/work-logs?' + new URLSearchParams({ ...work.filters, customer_id: work.customer ?? '', ...listingQuery('work', work.page) }))
     ]);
     if (state.view !== 'work') return;
     work.customers = customers.customers;
@@ -67,6 +67,7 @@ export function createExtras(ctx) {
       pageHead('CUSTOMER WORK LOG', '업무관리', '고객별 업무일지를 기록하고 진행 상황을 확인하세요.',
         canEdit() ? '<div class="head-actions"><button data-action="customer-new">＋ 고객 등록</button><button class="primary" data-action="work-new">＋ 업무일지 작성</button></div>' : '') +
       `<section class="panel classified-panel"><aside class="classified-sidebar"><div class="category-title">고객</div><button class="category-link ${work.customer === null ? 'selected' : ''}" data-action="work-customer">전체 고객</button>${work.customers.map(c => `<button class="category-link ${Number(work.customer) === c.id ? 'selected' : ''}" data-action="work-customer" data-id="${c.id}">${esc(c.name)} <small>${c.log_count}건</small></button>`).join('')}${canEdit() && work.customer ? '<div class="category-actions"><button class="small" data-action="customer-edit" data-id="' + work.customer + '">고객 정보 수정</button><button class="small danger" data-action="customer-delete" data-id="' + work.customer + '">고객 삭제</button></div>' : ''}</aside><div class="classified-main"><div class="panel-head"><h2>업무일지 <small>${result.total}건</small></h2></div><form id="work-filter" class="filters"><label>검색<input name="q" placeholder="고객, 제목, 담당자, 업무 내용" value="${esc(f.q)}"></label><label>상태<select name="status"><option value="">모든 상태</option>${Object.entries(workStatus).map(([key, value]) => `<option value="${key}" ${f.status === key ? 'selected' : ''}>${value}</option>`).join('')}</select></label><label>시작일<input name="from" type="date" value="${esc(f.from)}"></label><label>종료일<input name="to" type="date" value="${esc(f.to)}"></label><button class="primary">조회</button><button type="button" data-action="work-reset">초기화</button></form>${result.logs.length ? `<div class="table-wrap"><table><thead><tr><th>업무일</th><th>고객</th><th>제목</th><th>담당자</th><th>상태</th><th>최근 수정</th><th>관리</th></tr></thead><tbody>${result.logs.map(row => `<tr><td>${esc(row.work_date)}</td><td>${esc(row.customer_name)}</td><td><button class="link-button" data-action="work-log" data-id="${row.id}">${esc(row.title)}</button></td><td>${esc(row.owner) || '—'}</td><td><span class="badge">${workStatus[row.status]}</span></td><td>${fmt(row.updated_at)}</td><td>${canEdit() ? `<button class="small danger" data-action="work-delete" data-id="${row.id}">삭제</button>` : ''}</td></tr>`).join('')}</tbody></table></div>` : '<div class="empty"><h3>표시할 업무일지가 없습니다</h3><p>고객을 선택해 업무 내용을 등록하거나 검색 조건을 바꿔 보세요.</p></div>'}<div class="footer-row"><span>${result.total}건</span><div class="pager"><button class="small" data-action="work-prev" ${work.page <= 1 ? 'disabled' : ''}>이전</button><span>${work.page} / ${Math.max(1, Math.ceil(result.total / 25))}</span><button class="small" data-action="work-next" ${work.page >= Math.ceil(result.total / 25) ? 'disabled' : ''}>다음</button></div></div></div></section>`;
+    decorateListing('work', result.total, result.page);
   }
   function customerDialog(id) {
     const c = work.customers.find(row => row.id === Number(id)) ?? { active: true };
@@ -166,5 +167,5 @@ export function createExtras(ctx) {
     }
     return false;
   }
-  return { loadCategories, categoryPath, leafSelect, attachCategoryPanel, renderWork, renderReports, action, submit };
+  return { loadCategories, categoryPath, leafSelect, attachCategoryPanel, renderWork, renderReports, action, submit, resetWorkPage: () => { work.page = 1; } };
 }

@@ -27,7 +27,7 @@ test('two-level library, editing and legacy migration preserve documents', async
     return form;
   }
   try {
-    const setup = await request('/auth/setup', 'POST', { token: readFileSync(portal.tokenPath, 'utf8'), name: '관리자', email: 'admin@example.test', password: 'test-password-1234' });
+    const setup = await request('/auth/setup', 'POST', { token: readFileSync(portal.tokenPath, 'utf8'), name: '관리자', username: 'admin', email: 'admin@example.test', password: 'test-password-1234' });
     cookie = setup.headers.get('set-cookie').split(';')[0];
     const major = (await request('/folders', 'POST', { name: 'FortiGate' })).data.id;
     const middle = (await request('/folders', 'POST', { name: 'VPN', parent_id: major })).data.id;
@@ -82,8 +82,8 @@ test('two-level library, editing and legacy migration preserve documents', async
     });
     await t.test('editor can edit but viewer cannot change files or folders', async () => {
       for (const role of ['viewer', 'editor']) {
-        await request('/users', 'POST', { name: role, email: role + '@example.test', password: 'test-password-1234', role });
-        const login = await request('/auth/login', 'POST', { email: role + '@example.test', password: 'test-password-1234' });
+        await request('/users', 'POST', { name: role, username: role, email: role + '@example.test', password: 'test-password-1234', role });
+        const login = await request('/auth/login', 'POST', { username: role, password: 'test-password-1234' });
         const session = login.headers.get('set-cookie').split(';')[0];
         const expected = role === 'viewer' ? 403 : 200;
         assert.equal((await request('/folders/' + other, 'PUT', { name: '일반 자료' }, session)).status, expected);

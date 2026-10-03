@@ -1,3 +1,4 @@
+import { listing } from './listing.mjs';
 const fail = (status, message) => Object.assign(new Error(message), { status });
 const now = () => new Date().toISOString();
 const text = (value, label, max = 200, required = false) => {
@@ -100,11 +101,12 @@ export function registerWork(app, { db, requireRole }) {
     }
     if (req.query.from) { clauses.push('w.work_date>=?'); params.push(date(req.query.from)); }
     if (req.query.to) { clauses.push('w.work_date<=?'); params.push(date(req.query.to)); }
-    const page = id(req.query.page ?? 1), where = clauses.length ? 'WHERE ' + clauses.join(' AND ') : '';
+    const list = listing(req.query, {work_date:'w.work_date',customer:'c.name COLLATE NOCASE',title:'w.title COLLATE NOCASE',owner:'w.owner COLLATE NOCASE',status:'w.status',updated_at:'w.updated_at'}, 'work_date', 'desc', 'w.id');
+    const where = clauses.length ? 'WHERE ' + clauses.join(' AND ') : '';
     const from = `FROM work_logs w JOIN customers c ON c.id=w.customer_id ${where}`;
     res.json({
-      logs: db.prepare(`SELECT w.*,c.name customer_name ${from} ORDER BY w.work_date DESC,w.id DESC LIMIT 25 OFFSET ?`).all(...params, (page - 1) * 25),
-      total: db.prepare(`SELECT COUNT(*) n ${from}`).get(...params).n, page
+      logs: db.prepare(`SELECT w.*,c.name customer_name ${from} ORDER BY ${list.orderBy} LIMIT ? OFFSET ?`).all(...params, list.size, (list.page - 1) * list.size),
+      total: db.prepare(`SELECT COUNT(*) n ${from}`).get(...params).n, page: list.page, page_size: list.size
     });
   });
   app.get('/api/work-logs/:id', (req, res) => res.json({ log: log(req.params.id) }));

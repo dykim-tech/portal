@@ -2,6 +2,7 @@ import { extname } from 'node:path';
 import { transaction, koreaDate } from './db.mjs';
 import { writeUploadChunks, discardUpload, deleteUploadChunks, getStoredFile, sendStoredFile, uploadHeader, assertUploadSize } from './uploads.mjs';
 import { initializeCategories, registerCategories, categoryInput, categoryDescendants } from './categories.mjs';
+import { listing } from './listing.mjs';
 const now=()=>new Date().toISOString();
 const fail=(status,message)=>Object.assign(new Error(message),{status});
 const val=(value,label,max=200,required=false)=>{if(value!=null&&typeof value!=='string')throw fail(400,`${label} 형식을 확인해 주세요.`);const s=(value??'').trim();if(s.length>max||(required&&!s))throw fail(400,`${label} 항목을 확인해 주세요.`);return s;};
@@ -82,8 +83,9 @@ export function registerFeatures(app,{db,requireRole,upload}){
    if(req.query.status){clauses.push('status=?');params.push(val(req.query.status,'상태',30));}
    if(req.query.category_id){const ids=categoryDescendants(db,'installations',req.query.category_id);clauses.push(`category_id IN (${ids.map(()=>'?').join(',')})`);params.push(...ids);}
    if(req.query.from){clauses.push('installed_on>=?');params.push(date(req.query.from));}if(req.query.to){clauses.push('installed_on<=?');params.push(date(req.query.to));}
-   const page=id(req.query.page??1),where=clauses.length?'WHERE '+clauses.join(' AND '):'';
-   res.json({installations:db.prepare(`SELECT installations.*,(SELECT COUNT(*) FROM installation_files f WHERE f.installation_id=installations.id) AS file_count FROM installations ${where} ORDER BY updated_at DESC,id DESC LIMIT 50 OFFSET ?`).all(...params,(page-1)*50),total:db.prepare(`SELECT COUNT(*) n FROM installations ${where}`).get(...params).n,page});
+   const list=listing(req.query,{id:'installations.id',customer:'installations.customer COLLATE NOCASE',name:'installations.name COLLATE NOCASE',product_version:'installations.product_version COLLATE NOCASE',quantity:'installations.quantity',installed_on:'installations.installed_on',completed_on:'installations.completed_on',contact:'installations.contact COLLATE NOCASE',engineer:'installations.engineer COLLATE NOCASE',notes:'installations.notes COLLATE NOCASE',updated_at:'installations.updated_at'},'updated_at','desc','installations.id');
+   const where=clauses.length?'WHERE '+clauses.join(' AND '):'';
+   res.json({installations:db.prepare(`SELECT installations.*,(SELECT COUNT(*) FROM installation_files f WHERE f.installation_id=installations.id) AS file_count FROM installations ${where} ORDER BY ${list.orderBy} LIMIT ? OFFSET ?`).all(...params,list.size,(list.page-1)*list.size),total:db.prepare(`SELECT COUNT(*) n FROM installations ${where}`).get(...params).n,page:list.page,page_size:list.size});
  });
  app.get('/api/installations/:id',(req,res)=>{const record=installation(req.params.id);res.json({installation:record,files:db.prepare('SELECT id,name,size,preview_type,created_at FROM installation_files WHERE installation_id=? ORDER BY id DESC').all(record.id)});});
  app.post('/api/installations',edit,(req,res)=>{const data=installationData(req.body),stamp=now();const result=db.prepare(`INSERT INTO installations(${Object.keys(data).join(',')},created_by,updated_by,created_at,updated_at) VALUES(${Array(Object.keys(data).length+4).fill('?').join(',')})`).run(...Object.values(data),req.user.id,req.user.id,stamp,stamp);db.prepare('INSERT OR IGNORE INTO customers(name,created_at,updated_at) VALUES(?,?,?)').run(data.customer,stamp,stamp);res.status(201).json({installation:installation(result.lastInsertRowid) });});
@@ -93,9 +95,9 @@ export function registerFeatures(app,{db,requireRole,upload}){
    const folder=getFolder(req.query.folder),folderId=folder?.id??null;
    const breadcrumbs=[];let cursor=folder;while(cursor){breadcrumbs.unshift({id:cursor.id,name:cursor.name});cursor=cursor.parent_id?getFolder(cursor.parent_id):null;}
    const q=val(req.query.q,'검색어',200),pattern='%'+q.replace(/[\\%_]/g,'\\$&')+'%';
-   const page=id(req.query.page??1);
+   const list=listing(req.query,{name:'m.name COLLATE NOCASE',type:"lower(substr(m.name, instr(m.name,'.')+1))",size:'m.size',created_at:'m.created_at'},'name','asc','m.id');
    const where="folder_id IS ? AND name LIKE ? ESCAPE '\\'";
-   res.json({folder,breadcrumbs,tree:db.prepare('SELECT id,parent_id,name FROM folders ORDER BY name').all(),folders:db.prepare("SELECT * FROM folders WHERE parent_id IS ? AND name LIKE ? ESCAPE '\\' ORDER BY name").all(folderId,pattern),files:db.prepare(`SELECT m.id,m.folder_id,m.name,m.size,m.preview_type,m.created_at,u.name AS uploaded_by_name FROM manuals m JOIN users u ON u.id=m.uploaded_by WHERE ${where.replace('name LIKE','m.name LIKE')} ORDER BY m.name LIMIT 50 OFFSET ?`).all(folderId,pattern,(page-1)*50),total:db.prepare(`SELECT COUNT(*) n FROM manuals WHERE ${where}`).get(folderId,pattern).n,page});
+   res.json({folder,breadcrumbs,tree:db.prepare('SELECT id,parent_id,name FROM folders ORDER BY name').all(),folders:db.prepare("SELECT * FROM folders WHERE parent_id IS ? AND name LIKE ? ESCAPE '\\' ORDER BY name COLLATE NOCASE").all(folderId,pattern),files:db.prepare(`SELECT m.id,m.folder_id,m.name,m.size,m.preview_type,m.created_at,u.name AS uploaded_by_name FROM manuals m JOIN users u ON u.id=m.uploaded_by WHERE ${where.replace('name LIKE','m.name LIKE')} ORDER BY ${list.orderBy} LIMIT ? OFFSET ?`).all(folderId,pattern,list.size,(list.page-1)*list.size),total:db.prepare(`SELECT COUNT(*) n FROM manuals WHERE ${where}`).get(folderId,pattern).n,page:list.page,page_size:list.size});
  });
  app.post('/api/folders',edit,(req,res)=>{const parent=getFolder(req.body.parent_id),name=folderName(req.body.name);if(parent?.parent_id)throw fail(400,'분류는 대분류·중분류 2단계까지 만들 수 있습니다.');const result=db.prepare('INSERT INTO folders(parent_id,name,created_at) VALUES(?,?,?)').run(parent?.id??null,name,now());res.status(201).json({id:Number(result.lastInsertRowid)});});
  app.put('/api/folders/:id',edit,(req,res)=>{const folder=getFolder(req.params.id),name=folderName(req.body.name);db.prepare('UPDATE folders SET name=? WHERE id=?').run(name,folder.id);res.json({folder:getFolder(folder.id)});});

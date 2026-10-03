@@ -23,7 +23,7 @@ test('categories, installation files, customer work logs, and CSV reports', asyn
     return { status: response.status, data: response.headers.get('content-type')?.includes('json') ? await response.json() : await response.text(), headers: response.headers };
   }
   try {
-    const setup = await request('/auth/setup', 'POST', { token: readFileSync(portal.tokenPath, 'utf8'), name: '관리자', email: 'admin@example.test', password: 'test-password-1234' });
+    const setup = await request('/auth/setup', 'POST', { token: readFileSync(portal.tokenPath, 'utf8'), name: '관리자', username: 'admin', email: 'admin@example.test', password: 'test-password-1234' });
     assert.equal(setup.status, 201);
     cookie = setup.headers.get('set-cookie').split(';')[0];
     async function makeCategory(scope, name, parent_id = null) {
@@ -97,9 +97,9 @@ test('categories, installation files, customer work logs, and CSV reports', asyn
     const workCsv = await request('/reports/work-logs.csv?from=2026-10-02');
     assert.equal(workCsv.status, 200);
     assert.doesNotMatch(workCsv.data, /정상 작동/);
-    const viewer = await request('/users', 'POST', { name: '조회자', email: 'viewer@example.test', password: 'test-password-1234', role: 'viewer' });
+    const viewer = await request('/users', 'POST', { name: '조회자', username: 'viewer', email: 'viewer@example.test', password: 'test-password-1234', role: 'viewer' });
     assert.equal(viewer.status, 201);
-    const login = await request('/auth/login', 'POST', { email: 'viewer@example.test', password: 'test-password-1234' });
+    const login = await request('/auth/login', 'POST', { username: 'viewer', password: 'test-password-1234' });
     const viewerCookie = login.headers.get('set-cookie').split(';')[0];
     assert.equal((await request('/reports', 'GET', undefined, viewerCookie)).status, 200);
     assert.equal((await request('/categories', 'POST', { scope: 'items', name: '금지' }, viewerCookie)).status, 403);
@@ -156,10 +156,10 @@ test('record deletion removes attachments while customer removal preserves linke
     return { status: response.status, data: response.headers.get('content-type')?.includes('json') ? await response.json() : await response.text(), headers: response.headers };
   }
   try {
-    const setup = await request('/auth/setup', 'POST', { token: readFileSync(portal.tokenPath, 'utf8'), name: '관리자', email: 'delete-admin@example.test', password: 'test-password-1234' });
+    const setup = await request('/auth/setup', 'POST', { token: readFileSync(portal.tokenPath, 'utf8'), name: '관리자', username: 'delete-admin', email: 'delete-admin@example.test', password: 'test-password-1234' });
     cookie = setup.headers.get('set-cookie').split(';')[0];
-    const viewer = await request('/users', 'POST', { name: '조회자', email: 'delete-viewer@example.test', role: 'viewer', password: 'test-password-1234' });
-    const viewerLogin = await request('/auth/login', 'POST', { email: 'delete-viewer@example.test', password: 'test-password-1234' });
+    const viewer = await request('/users', 'POST', { name: '조회자', username: 'delete-viewer', email: 'delete-viewer@example.test', role: 'viewer', password: 'test-password-1234' });
+    const viewerLogin = await request('/auth/login', 'POST', { username: 'delete-viewer', password: 'test-password-1234' });
     const viewerCookie = viewerLogin.headers.get('set-cookie').split(';')[0];
     const created = await request('/installations', 'POST', { name: '제품', customer: '기록 고객', installed_on: '2026-10-01', status: 'installed' });
     const installationId = created.data.installation.id;

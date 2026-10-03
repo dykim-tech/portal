@@ -8,6 +8,7 @@ export function openDatabase(dir) {
   db.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;
     CREATE TABLE IF NOT EXISTS users (
       id INTEGER PRIMARY KEY, name TEXT NOT NULL, email TEXT NOT NULL UNIQUE COLLATE NOCASE,
+      username TEXT,
       password TEXT NOT NULL, role TEXT NOT NULL CHECK(role IN ('admin','editor','viewer')),
       active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL
     );
@@ -45,6 +46,18 @@ export function openDatabase(dir) {
     CREATE INDEX IF NOT EXISTS notifications_user ON notifications(user_id, read_at);
     PRAGMA user_version=1;
   `);
+  const userColumns = new Set(db.prepare('PRAGMA table_info(users)').all().map(column => column.name));
+  if (!userColumns.has('username')) db.exec('ALTER TABLE users ADD COLUMN username TEXT');
+  const taken = new Set(db.prepare("SELECT lower(username) value FROM users WHERE username IS NOT NULL AND username != ''").all().map(row => row.value));
+  for (const user of db.prepare("SELECT id,email FROM users WHERE username IS NULL OR username='' ORDER BY id").all()) {
+    const local = user.email.split('@')[0].toLowerCase().replace(/[^a-z0-9._-]/g, '-').replace(/^[^a-z0-9]+/, '').slice(0, 24);
+    const base = local.length >= 2 ? local : `user${user.id}`;
+    let candidate = base, suffix = 1;
+    while (taken.has(candidate.toLowerCase())) candidate = `${base}-${++suffix}`;
+    db.prepare('UPDATE users SET username=? WHERE id=?').run(candidate, user.id);
+    taken.add(candidate.toLowerCase());
+  }
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS users_username_unique ON users(username COLLATE NOCASE)');
   return db;
 }
 

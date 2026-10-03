@@ -26,7 +26,7 @@ test('portal integration', async t=>{
     });
     await t.test('one-time setup and protected session',async()=>{
       assert.equal((await request('/auth/setup',{method:'POST',body:{token:'wrong'}})).status,403);
-      const result=await request('/auth/setup',{method:'POST',body:{token:readFileSync(portal.tokenPath,'utf8'),name:'테스트 관리자',email:'admin@example.test',password}});
+      const result=await request('/auth/setup',{method:'POST',body:{token:readFileSync(portal.tokenPath,'utf8'),name:'테스트 관리자',username:'admin',email:'admin@example.test',password}});
       assert.equal(result.status,201);assert.equal(result.data.user.role,'admin');assert.equal(result.data.user.password,undefined);
       assert.match(result.headers.get('set-cookie'),/HttpOnly/);assert.match(result.headers.get('set-cookie'),/SameSite=Strict/);
       cookie=result.headers.get('set-cookie').split(';')[0];assert.equal(existsSync(portal.tokenPath),false);
@@ -34,14 +34,14 @@ test('portal integration', async t=>{
     });
     await t.test('user creation and role boundaries',async()=>{
       for(const role of ['viewer','editor']){
-        const result=await request('/users',{method:'POST',body:{name:role,email:`${role}@example.test`,password,role}});assert.equal(result.status,201);
-        const login=await request('/auth/login',{method:'POST',body:{email:`${role}@example.test`,password},session:''});assert.equal(login.status,200);
+        const result=await request('/users',{method:'POST',body:{name:role,username:role,email:`${role}@example.test`,password,role}});assert.equal(result.status,201);
+        const login=await request('/auth/login',{method:'POST',body:{username:role,password},session:''});assert.equal(login.status,200);
         if(role==='viewer'){viewer=result.data.user;viewerCookie=login.headers.get('set-cookie').split(';')[0];}else{editor=result.data.user;editorCookie=login.headers.get('set-cookie').split(';')[0];}
       }
       assert.equal((await request('/users',{session:viewerCookie})).status,403);
       assert.equal((await request('/users',{method:'POST',session:editorCookie,body:{}})).status,403);
       assert.equal((await request('/items',{method:'POST',session:viewerCookie,body:{}})).status,403);
-      assert.equal((await request('/users/1',{method:'PUT',body:{name:'관리자',email:'admin@example.test',role:'viewer',active:true}})).status,400);
+      assert.equal((await request('/users/1',{method:'PUT',body:{name:'관리자',username:'admin',email:'admin@example.test',role:'viewer',active:true}})).status,400);
     });
     await t.test('record validation and duplicate codes',async()=>{
       const result=await request('/items',{method:'POST',session:editorCookie,body:{name:'테스트 노트북 100%',asset_code:'IT-001',category:'it',status:'active',quantity:1,owner:'담당자',location:'사무실',serial:'SN-001',description:'<script>alert(1)</script>',due_date:koreaDate(),reminder_days:7}});
@@ -86,14 +86,14 @@ test('portal integration', async t=>{
     await t.test('disabling user revokes sessions',async()=>{
       assert.equal((await request('/users/'+viewer.id,{method:'PUT',body:{...viewer,active:false}})).status,200);
       assert.equal((await request('/items',{session:viewerCookie})).status,401);
-      assert.equal((await request('/auth/login',{method:'POST',body:{email:viewer.email,password}})).status,401);
+      assert.equal((await request('/auth/login',{method:'POST',body:{username:viewer.username,password}})).status,401);
     });
     await t.test('password changes invalidate sessions',async()=>{
       assert.equal((await request('/auth/password',{method:'POST',session:editorCookie,body:{current:password,password:'changed-test-password-1234'}})).status,200);
       assert.equal((await request('/items',{session:editorCookie})).status,401);
     });
     await t.test('login rate limit',async()=>{
-      let last;for(let i=0;i<16;i++)last=await request('/auth/login',{method:'POST',body:{email:'missing@example.test',password:'wrong'}});assert.equal(last.status,429);
+      let last;for(let i=0;i<16;i++)last=await request('/auth/login',{method:'POST',body:{username:'missing',password:'wrong'}});assert.equal(last.status,429);
     });
     await t.test('logout revokes session',async()=>{assert.equal((await request('/auth/logout',{method:'POST',body:{}})).status,200);assert.equal((await request('/items')).status,401);});
   }finally{await new Promise(resolve=>server.close(resolve));portal.db.close();}

@@ -12,6 +12,7 @@ import { existsSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openDatabase, transaction, scanDeadlines } from './db.mjs';
+import { listing } from './listing.mjs';
 
 const scrypt = promisify(scryptCallback);
 const hash = value => createHash('sha256').update(value).digest('hex');
@@ -19,7 +20,7 @@ const roles = ['admin', 'editor', 'viewer'];
 const statuses = ['active', 'stored', 'repair', 'retired'];
 const now = () => new Date().toISOString();
 const fail = (status, message) => Object.assign(new Error(message), { status });
-const publicUser = user => ({ id: user.id, name: user.name, email: user.email, role: user.role, active: Boolean(user.active), created_at: user.created_at });
+const publicUser = user => ({ id: user.id, name: user.name, username: user.username, email: user.email, role: user.role, active: Boolean(user.active), created_at: user.created_at });
 function text(value, label, max = 200, required = false) {
   if (value !== undefined && typeof value !== 'string') throw fail(400, `${label} 형식이 올바르지 않습니다.`);
   const result = (value ?? '').trim();
@@ -38,6 +39,11 @@ function date(value) {
 function email(value) {
   const result = text(value, '이메일', 254, true).toLowerCase();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(result)) throw fail(400, '이메일을 확인해 주세요.');
+  return result;
+}
+function username(value) {
+  const result = text(value, '아이디', 32, true).toLowerCase();
+  if (!/^[a-z0-9][a-z0-9._-]{1,31}$/.test(result)) throw fail(400, '아이디는 영문·숫자로 시작하는 2~32자의 영문, 숫자, 점, 밑줄, 하이픈으로 입력해 주세요.');
   return result;
 }
 async function passwordHash(value) {
@@ -103,7 +109,7 @@ export function createPortal(options = {}) {
   }
   function limiter(req, suffix = '') {
     const keys = [hash(`ip:${req.ip}:${suffix}`)];
-    if (typeof req.body.email === 'string') keys.push(hash(`account:${req.body.email.toLowerCase().trim()}:${suffix}`));
+    if (typeof req.body.username === 'string') keys.push(hash(`account:${req.body.username.toLowerCase().trim()}:${suffix}`));
     for (const key of keys) {
       const row = db.prepare('SELECT * FROM login_attempts WHERE key=?').get(key);
       if (row && row.reset_at > Date.now() && row.attempts >= 15) throw fail(429, '시도 횟수가 많습니다. 15분 뒤 다시 시도해 주세요.');
@@ -121,10 +127,10 @@ export function createPortal(options = {}) {
     limiter(req, 'setup');
     if (!setupToken) throw fail(409, '초기 설정이 이미 완료되었습니다.');
     if (typeof req.body.token !== 'string' || !timingSafeEqual(Buffer.from(hash(req.body.token)), Buffer.from(hash(setupToken)))) throw fail(403, '초기 설정 코드를 확인해 주세요.');
-    const name = text(req.body.name, '이름', 100, true), mail = email(req.body.email), password = await passwordHash(req.body.password);
+    const name = text(req.body.name, '이름', 100, true), loginId = username(req.body.username), mail = email(req.body.email), password = await passwordHash(req.body.password);
     const id = transaction(db, () => {
       if (db.prepare('SELECT id FROM users LIMIT 1').get()) throw fail(409, '초기 설정이 이미 완료되었습니다.');
-      return Number(db.prepare("INSERT INTO users(name,email,password,role,created_at) VALUES(?,?,?,'admin',?)").run(name, mail, password, now()).lastInsertRowid);
+      return Number(db.prepare("INSERT INTO users(name,username,email,password,role,created_at) VALUES(?,?,?,?,'admin',?)").run(name, loginId, mail, password, now()).lastInsertRowid);
     });
     setupToken = null;
     if (existsSync(tokenPath)) unlinkSync(tokenPath);
@@ -133,10 +139,10 @@ export function createPortal(options = {}) {
   });
   app.post('/api/auth/login', async (req,res) => {
     limiter(req);
-    const mail = email(req.body.email);
-    const user = db.prepare('SELECT * FROM users WHERE email=?').get(mail);
+    const loginId = username(req.body.username);
+    const user = db.prepare('SELECT * FROM users WHERE username=? COLLATE NOCASE').get(loginId);
     const valid = await passwordMatches(req.body.password, user?.password ?? await dummyHashPromise);
-    if (!valid || !user?.active) throw fail(401, '이메일 또는 비밀번호를 확인해 주세요.');
+    if (!valid || !user?.active) throw fail(401, '아이디 또는 비밀번호를 확인해 주세요.');
     session(res,user); res.json({ user: publicUser(user) });
   });
   app.use('/api', requireAuth);
@@ -150,22 +156,22 @@ export function createPortal(options = {}) {
   });
   app.get('/api/users', requireRole(['admin']), (_req,res) => res.json({ users: db.prepare('SELECT * FROM users ORDER BY id').all().map(publicUser) }));
   app.post('/api/users', requireRole(['admin']), async (req,res) => {
-    const name = text(req.body.name,'이름',100,true), mail=email(req.body.email);
+    const name = text(req.body.name,'이름',100,true), loginId=username(req.body.username), mail=email(req.body.email);
     if (!roles.includes(req.body.role)) throw fail(400,'권한을 확인해 주세요.');
     const password=await passwordHash(req.body.password);
-    const id=db.prepare('INSERT INTO users(name,email,password,role,created_at) VALUES(?,?,?,?,?)').run(name,mail,password,req.body.role,now()).lastInsertRowid;
+    const id=db.prepare('INSERT INTO users(name,username,email,password,role,created_at) VALUES(?,?,?,?,?,?)').run(name,loginId,mail,password,req.body.role,now()).lastInsertRowid;
     res.status(201).json({user:publicUser(db.prepare('SELECT * FROM users WHERE id=?').get(id))});
   });
   app.put('/api/users/:id', requireRole(['admin']), async (req,res) => {
     const id=integer(req.params.id,'사용자',1,Number.MAX_SAFE_INTEGER);
     const original=db.prepare('SELECT * FROM users WHERE id=?').get(id);
     if (!original) throw fail(404,'사용자를 찾을 수 없습니다.');
-    const name=text(req.body.name,'이름',100,true), mail=email(req.body.email), role=req.body.role;
+    const name=text(req.body.name,'이름',100,true), loginId=username(req.body.username), mail=email(req.body.email), role=req.body.role;
     if (!roles.includes(role) || typeof req.body.active!=='boolean') throw fail(400,'사용자 설정을 확인해 주세요.');
     if (id===req.user.id && (role!=='admin' || !req.body.active)) throw fail(400,'본인의 관리자 권한을 해제하거나 계정을 비활성화할 수 없습니다.');
     const password=req.body.password ? await passwordHash(req.body.password) : original.password;
     transaction(db,()=>{
-      db.prepare('UPDATE users SET name=?,email=?,role=?,active=?,password=? WHERE id=?').run(name,mail,role,Number(req.body.active),password,id);
+      db.prepare('UPDATE users SET name=?,username=?,email=?,role=?,active=?,password=? WHERE id=?').run(name,loginId,mail,role,Number(req.body.active),password,id);
       if (password!==original.password || role!==original.role || !req.body.active) db.prepare('DELETE FROM sessions WHERE user_id=?').run(id);
     });
     res.json({ok:true});
@@ -188,11 +194,12 @@ export function createPortal(options = {}) {
     if(req.query.from){clauses.push('i.updated_at>=?');params.push(date(req.query.from)+'T00:00:00+09:00'); params[params.length-1]=new Date(params.at(-1)).toISOString();}
     if(req.query.to){clauses.push('i.updated_at<=?');params.push(new Date(date(req.query.to)+'T23:59:59.999+09:00').toISOString());}
     if(req.query.due==='set') clauses.push('i.due_date IS NOT NULL');
-    const page=integer(req.query.page??1,'페이지',1,1000000), limit=25;
+    const list=listing(req.query,{name:'i.name COLLATE NOCASE',asset_code:'i.asset_code COLLATE NOCASE',category:'i.category',status:'i.status',owner:'i.owner COLLATE NOCASE',due_date:'i.due_date',updated_at:'i.updated_at',file_count:'file_count'},'updated_at','desc','i.id');
+    const page=list.page, limit=list.size;
     const where=clauses.length?'WHERE '+clauses.join(' AND '):'';
     const total=db.prepare(`SELECT COUNT(*) AS n FROM items i ${where}`).get(...params).n;
-    const items=db.prepare(`SELECT i.*,u.name AS updated_by_name,(SELECT COUNT(*) FROM files f WHERE f.item_id=i.id) AS file_count FROM items i JOIN users u ON u.id=i.updated_by ${where} ORDER BY i.updated_at DESC,i.id DESC LIMIT ? OFFSET ?`).all(...params,limit,(page-1)*limit);
-    res.json({items,total,page,pages:Math.ceil(total/limit),stats:db.prepare("SELECT COUNT(*) AS total,COALESCE(SUM(category='general'),0) AS general,COALESCE(SUM(category='it'),0) AS it,COALESCE(SUM(status='repair'),0) AS repair FROM items").get()});
+    const items=db.prepare(`SELECT i.*,u.name AS updated_by_name,(SELECT COUNT(*) FROM files f WHERE f.item_id=i.id) AS file_count FROM items i JOIN users u ON u.id=i.updated_by ${where} ORDER BY ${list.orderBy} LIMIT ? OFFSET ?`).all(...params,limit,(page-1)*limit);
+    res.json({items,total,page,page_size:limit,pages:Math.ceil(total/limit),stats:db.prepare("SELECT COUNT(*) AS total,COALESCE(SUM(category='general'),0) AS general,COALESCE(SUM(category='it'),0) AS it,COALESCE(SUM(status='repair'),0) AS repair FROM items").get()});
   });
   app.get('/api/items/:id',(req,res)=>{const current=item(req.params.id);res.json({item:current,files:db.prepare('SELECT id,name,size,created_at FROM files WHERE item_id=? ORDER BY id DESC').all(current.id),history:db.prepare('SELECT h.*,u.name AS actor FROM history h JOIN users u ON u.id=h.actor_id WHERE item_id=? ORDER BY h.id DESC LIMIT 100').all(current.id)});});
   app.post('/api/items',requireRole(['admin','editor']),(req,res)=>{
@@ -250,6 +257,7 @@ export function createPortal(options = {}) {
   for (const dir of ['build','cmaps','standard_fonts','wasm']) app.use('/vendor/pdfjs/'+dir, express.static(resolve(dirname(fileURLToPath(import.meta.url)), '../node_modules/pdfjs-dist',dir)));
   app.use(express.static(resolve(dirname(fileURLToPath(import.meta.url)),'../public'),{etag:true}));
   app.use((err,_req,res,_next)=>{
+    if(err.code==='SQLITE_CONSTRAINT_UNIQUE' && /users\.username|users_username_unique/.test(err.message))return res.status(409).json({error:'이미 사용 중인 아이디입니다.'});
     if(err.code==='SQLITE_CONSTRAINT_UNIQUE' || /UNIQUE constraint failed/.test(err.message))return res.status(409).json({error:'같은 이름이나 관리번호가 이미 등록되어 있습니다.'});
     if(err instanceof multer.MulterError)return res.status(400).json({error:err.code==='LIMIT_FILE_SIZE'?'파일은 500MB 이하로 첨부해 주세요.':'첨부 요청이 올바르지 않습니다.'});
     const status=err.status??500;if(status>=500)console.error(err);
