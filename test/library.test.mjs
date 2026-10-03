@@ -71,6 +71,11 @@ test('two-level library, editing and legacy migration preserve documents', async
       assert.equal(downloaded.data, '원본 자료 본문');
       assert.ok(downloaded.headers.get('content-disposition').includes(encodeURIComponent(after.name)));
       assert.equal((await request('/manuals/' + fileId + '/preview')).data, downloaded.data);
+      assert.equal((await request('/manuals/' + fileId, 'PUT', { folder_id: middle })).status, 200);
+      assert.equal((await request('/manuals/' + fileId)).data.file.name, after.name);
+      assert.equal((await request('/library?folder=' + middle)).data.total, 1);
+      assert.equal((await request('/manuals/' + fileId, 'PUT', { folder_id: other })).status, 200);
+      assert.equal((await request('/manuals/' + fileId + '/download')).data, downloaded.data);
       for (const name of ['', 'changed.pdf', '../bad.txt', 'bad\u0000.txt', 'x'.repeat(241) + '.txt']) {
         assert.equal((await request('/manuals/' + fileId, 'PUT', { name })).status, 400);
       }

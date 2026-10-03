@@ -137,7 +137,7 @@ export function registerFeatures(app,{db,requireRole,upload}){
  const manual=value=>{const file=getStoredFile(db,'manuals',id(value));if(!file)throw fail(404,'자료를 찾을 수 없습니다.');return file;};
  app.get('/api/manuals/:id',(req,res)=>{const file=manual(req.params.id);res.json({file:{id:file.id,folder_id:file.parent_id,name:file.name,size:file.size,preview_type:file.preview_type,created_at:file.created_at}});});
  app.put('/api/manuals/:id',edit,(req,res)=>{
-   const file=manual(req.params.id),name=val(req.body.name,'자료명',240,true);
+   const file=manual(req.params.id),name=val(req.body.name===undefined?file.name:req.body.name,'자료명',240,true);
    if(/[\\/\u0000-\u001f\u007f]/.test(name)||['.','..'].includes(name))throw fail(400,'자료 이름에 경로 문자나 제어 문자를 사용할 수 없습니다.');
    if(extname(name).toLowerCase()!==extname(file.name).toLowerCase())throw fail(400,'파일 확장자는 변경할 수 없습니다.');
    const folderId=req.body.folder_id===undefined||String(req.body.folder_id??'')===String(file.parent_id??'')?file.parent_id:middleFolder(req.body.folder_id).id;
