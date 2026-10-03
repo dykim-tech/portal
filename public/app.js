@@ -73,6 +73,57 @@ async function showUsers(){await renderUsers();if(state.view==='users')decorateL
 function userDialog(id){const u=state.users.find(u=>u.id===Number(id))??{role:'viewer',active:true};state.editUser=u;openDialog(id?'사용자 수정':'사용자 추가',`<form id="user-form"><div class="form-grid">${input('name','이름 *',u.name,'required maxlength="100" autocomplete="off"')}${input('username','로그인 아이디 *',u.username,'required minlength="2" maxlength="32" pattern="[A-Za-z0-9][A-Za-z0-9._-]{1,31}" autocomplete="off"')}${input('email','이메일 *',u.email,'type="email" required maxlength="254" autocomplete="off"')}<label>권한<select name="role">${options(['admin','editor','viewer'],u.role)}</select></label>${input('password',id?'새 비밀번호 (변경할 때만)':'초기 비밀번호 *','','type="password" minlength="12" maxlength="128" autocomplete="new-password" '+(id?'':'required'))}${id?`<label class="checkbox-line"><input name="active" type="checkbox" ${u.active?'checked':''}>계정 활성화</label>`:''}</div><p class="help-line">로그인은 아이디로 합니다. 이메일은 계정 정보로 유지됩니다. 비밀번호는 12자 이상입니다. 비밀번호·권한 변경 또는 계정 비활성화 시 기존 로그인이 해제됩니다.</p><div class="form-actions"><button type="button" data-action="close">취소</button><button class="primary">저장</button></div></form>`);}
 async function renderNotifications(){const result=await refreshCount();if(state.view!=='notifications')return;document.querySelector('#content').innerHTML=`<div class="page-head"><div><p class="eyebrow">DEADLINE INBOX</p><h1>기한 알림</h1><p>점검, 보증, 반납 등 놓치지 않아야 할 날짜를 확인하세요.</p></div><button data-action="read-all" ${result.unread?'':'disabled'}>모두 읽음</button></div><div class="notice">읽지 않은 알림 ${result.unread}건 · 서버가 실행되는 동안 1분마다 기한을 확인합니다. 알림은 포털 내부에서 제공되며, 종료된 동안 지난 기한은 다음 실행 시 확인합니다.</div><section class="panel"><div class="panel-head"><h2>최근 알림 <small>최대 200건 표시</small></h2><button class="small" data-action="refresh-notifications">새로고침</button></div><div class="notifications">${result.notifications.length?result.notifications.map(n=>`<article class="notification ${n.read_at?'':'unread'}"><span class="badge ${n.kind}">${labels[n.kind]}</span><div class="notification-content"><p>${esc(n.title)}</p><small>${esc(n.asset_code)} · ${fmt(n.created_at)}${n.read_at?' · 읽음':''}</small></div><div class="notification-actions"><button class="small" data-action="item" data-id="${n.item_id}">물품 보기</button>${!n.read_at?`<button class="small" data-action="read" data-id="${n.id}">읽음</button>`:''}</div></article>`).join(''):'<div class="empty"><h3>도착한 기한 알림이 없습니다</h3><p>물품의 관리 기한과 사전 알림 일수를 설정하면<br>해당 날짜에 알림이 표시됩니다.</p></div>'}</div></section>`;}
 function passwordDialog(){openDialog('비밀번호 변경',`<form id="password-form"><div class="form-grid"><label class="full">현재 비밀번호<input name="current" type="password" required maxlength="128" autocomplete="current-password"></label><label class="full">새 비밀번호<input name="password" type="password" required minlength="12" maxlength="128" autocomplete="new-password"></label></div><p class="help-line">변경 후 모든 기기에서 로그아웃됩니다.</p><div class="form-actions"><button class="primary">비밀번호 변경</button></div></form>`);}
+const recordMenu=document.createElement('div');
+recordMenu.className='record-context-menu';
+recordMenu.setAttribute('role','menu');
+recordMenu.setAttribute('aria-label','선택한 항목 작업');
+recordMenu.hidden=true;
+document.body.append(recordMenu);
+function hideRecordMenu(){recordMenu.hidden=true;recordMenu.replaceChildren();}
+function recordAt(target){
+  if(!(target instanceof Element)||!target.closest('#content'))return null;
+  let button,kind;
+  if(state.view==='work'){
+    button=target.closest('.classified-sidebar [data-action="work-customer"][data-id]');kind='customer';
+    if(!button){button=target.closest('tbody tr')?.querySelector('[data-action="work-log"]');kind='work';}
+  }else if(state.view==='items'){
+    button=target.closest('.classified-sidebar [data-action="category-select"][data-id]');kind='category';
+    if(!button){button=target.closest('tbody tr')?.querySelector('[data-action="item"]');kind='item';}
+  }else if(state.view==='installations'){
+    button=target.closest('tbody tr')?.querySelector('[data-action="installation"]');kind='installation';
+  }else if(state.view==='library'){
+    button=target.closest('.folder-tree-row')?.querySelector('[data-action="folder"]')??target.closest('.file-table tbody tr')?.querySelector('[data-action="folder"], [data-action="preview"]');
+    kind=button?.dataset.action==='folder'?'folder':'manual';
+  }else if(state.view==='users'){
+    button=target.closest('tbody tr')?.querySelector('[data-action="user"]');kind='user';
+  }else if(state.view==='dashboard'||state.view==='notifications'){
+    button=target.closest('.dashboard-row, .notification')?.querySelector('[data-action="item"], [data-action="installation"]');
+    kind=button?.dataset.action;
+  }
+  const id=button?.dataset.id;
+  return id&&/^\d+$/.test(id)?{kind,id}:null;
+}
+const recordActions={customer:['customer-edit','customer-delete'],work:['work-log','work-delete'],category:['category-rename','category-delete'],item:['item','delete-item'],installation:['installation','installation-delete'],folder:['rename-folder','delete-folder'],manual:['edit-manual','delete-manual'],user:['user','delete-user']};
+document.addEventListener('contextmenu',event=>{
+  if(!state.user||!canEdit()||modal.open)return;
+  const record=recordAt(event.target);
+  if(!record)return;
+  event.preventDefault();
+  const actions=recordActions[record.kind];
+  if(!actions)return;
+  const showDelete=record.kind!=='user'||Number(record.id)!==state.user.id;
+  recordMenu.innerHTML=actions.slice(0,showDelete?2:1).map((action,index)=>`<button type="button" role="menuitem" class="${index?'danger':''}" data-action="${action}" data-id="${record.id}" ${record.kind==='category'?'data-scope="items"':''}>${index?'삭제':'수정'}</button>`).join('');
+  recordMenu.hidden=false;
+  const x=event.clientX||event.target.getBoundingClientRect().left,y=event.clientY||event.target.getBoundingClientRect().bottom;
+  recordMenu.style.left=Math.max(8,Math.min(x,window.innerWidth-recordMenu.offsetWidth-8))+'px';
+  recordMenu.style.top=Math.max(8,Math.min(y,window.innerHeight-recordMenu.offsetHeight-8))+'px';
+  recordMenu.querySelector('button')?.focus({preventScroll:true});
+});
+recordMenu.addEventListener('click',event=>{if(event.target.closest('button'))queueMicrotask(hideRecordMenu);});
+document.addEventListener('pointerdown',event=>{if(!recordMenu.hidden&&!recordMenu.contains(event.target))hideRecordMenu();});
+document.addEventListener('keydown',event=>{if(event.key==='Escape')hideRecordMenu();});
+window.addEventListener('scroll',hideRecordMenu,true);
+window.addEventListener('resize',hideRecordMenu);
 document.addEventListener('click',async event=>{
   const button=event.target.closest('button');if(!button)return;
   try{
@@ -91,8 +142,8 @@ document.addEventListener('click',async event=>{
     if(action==='password')passwordDialog();
     if(action==='account')openDialog('내 계정',`<p>${esc(state.user.name)} · ${labels[state.user.role]}</p><div class="form-actions"><button data-action="password">비밀번호 변경</button><button data-action="logout">로그아웃</button></div>`);
     if(action==='delete-file'&&confirm('첨부자료를 삭제할까요? 이 작업은 되돌릴 수 없습니다.')){await api('/files/'+id,{method:'DELETE'});await itemDialog(state.item.id);await renderView();toast('첨부자료를 삭제했습니다.');}
-    if(action==='delete-item'&&confirm('이 자산과 첨부자료·변경 이력을 모두 삭제할까요? 이 작업은 되돌릴 수 없습니다.')){await api('/items/'+id,{method:'DELETE'});modal.close();await renderView();await refreshCount();toast('자산을 삭제했습니다.');}
-    if(action==='delete-user'&&confirm('사용자 계정을 삭제할까요? 이력이 있는 계정은 삭제할 수 없으며 비활성화할 수 있습니다.')){await api('/users/'+id,{method:'DELETE'});modal.close();await showUsers();toast('사용자를 삭제했습니다.');}
+    if(action==='delete-item'&&confirm('이 자산과 첨부자료·변경 이력을 모두 삭제할까요? 이 작업은 되돌릴 수 없습니다.')){await api('/items/'+id,{method:'DELETE'});if(modal.open)modal.close();await renderView();await refreshCount();toast('자산을 삭제했습니다.');}
+    if(action==='delete-user'&&confirm('사용자 계정을 삭제할까요? 이력이 있는 계정은 삭제할 수 없으며 비활성화할 수 있습니다.')){await api('/users/'+id,{method:'DELETE'});if(modal.open)modal.close();await showUsers();toast('사용자를 삭제했습니다.');}
     if(action==='read'||action==='read-all'){await api('/notifications/read',{method:'POST',body:id?{id:Number(id)}:{}});await renderNotifications();}
     if(action==='refresh-notifications')await renderNotifications();
   }catch(error){if(modal.open)document.querySelector('#dialog-error').textContent=error.message;else toast(error.message);}
@@ -238,7 +289,7 @@ async function featureAction(action,id,button){
  case 'delete-folder':if(confirm('비어 있는 분류를 삭제할까요?')){await api('/folders/'+id,{method:'DELETE'});await renderLibrary();toast('분류를 삭제했습니다.');}return true;
  case 'delete-manual':if(confirm('자료를 삭제할까요? 이 작업은 되돌릴 수 없습니다.')){await api('/manuals/'+id,{method:'DELETE'});await renderLibrary();toast('자료를 삭제했습니다.');}return true;
  case 'installation-delete-file':if(confirm('첨부자료를 삭제할까요?')){await api('/installation-files/'+id,{method:'DELETE'});await installationDialog(features.installation.id);await renderView();toast('첨부자료를 삭제했습니다.');}return true;
- case 'installation-delete':if(confirm('이 설치 정보와 첨부자료를 모두 삭제할까요? 이 작업은 되돌릴 수 없습니다.')){await api('/installations/'+id,{method:'DELETE'});modal.close();await renderView();await refreshCount();toast('설치 정보를 삭제했습니다.');}return true;
+ case 'installation-delete':if(confirm('이 설치 정보와 첨부자료를 모두 삭제할까요? 이 작업은 되돌릴 수 없습니다.')){await api('/installations/'+id,{method:'DELETE'});if(modal.open)modal.close();await renderView();await refreshCount();toast('설치 정보를 삭제했습니다.');}return true;
  case 'theme':applyTheme(button.dataset.mode);renderSettings();return true;
  default:return false;
  }
