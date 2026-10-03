@@ -5,6 +5,7 @@ export function createExtras(ctx) {
   const report = { from: '', to: '' };
   const levelNames = ['대분류', '중분류', '소분류'];
   const workStatus = { planned: '예정', progress: '진행 중', done: '완료', hold: '보류' };
+  const workTypes = { regular: '정기점검', incident: '장애지원', installation: '설치', per_call: 'Per Call' };
 
   async function loadCategories(scope) {
     const result = await api('/categories?scope=' + encodeURIComponent(scope));
@@ -67,6 +68,12 @@ export function createExtras(ctx) {
       pageHead('CUSTOMER WORK LOG', '업무관리', '고객별 업무일지를 기록하고 진행 상황을 확인하세요.',
         canEdit() ? '<div class="head-actions"><button data-action="customer-new">＋ 고객 등록</button><button class="primary" data-action="work-new">＋ 업무일지 작성</button></div>' : '') +
       `<section class="panel classified-panel"><aside class="classified-sidebar"><div class="category-title">고객</div><button class="category-link ${work.customer === null ? 'selected' : ''}" data-action="work-customer">전체 고객</button>${work.customers.map(c => `<button class="category-link ${Number(work.customer) === c.id ? 'selected' : ''}" data-action="work-customer" data-id="${c.id}">${esc(c.name)} <small>${c.log_count}건</small></button>`).join('')}${canEdit() && work.customer ? '<div class="category-actions"><button class="small" data-action="customer-edit" data-id="' + work.customer + '">고객 정보 수정</button><button class="small danger" data-action="customer-delete" data-id="' + work.customer + '">고객 삭제</button></div>' : ''}</aside><div class="classified-main"><div class="panel-head"><h2>업무일지 <small>${result.total}건</small></h2></div><form id="work-filter" class="filters"><label>검색<input name="q" placeholder="고객, 제목, 담당자, 업무 내용" value="${esc(f.q)}"></label><label>상태<select name="status"><option value="">모든 상태</option>${Object.entries(workStatus).map(([key, value]) => `<option value="${key}" ${f.status === key ? 'selected' : ''}>${value}</option>`).join('')}</select></label><label>시작일<input name="from" type="date" value="${esc(f.from)}"></label><label>종료일<input name="to" type="date" value="${esc(f.to)}"></label><button class="primary">조회</button><button type="button" data-action="work-reset">초기화</button></form>${result.logs.length ? `<div class="table-wrap"><table><thead><tr><th>업무일</th><th>고객</th><th>제목</th><th>담당자</th><th>상태</th><th>최근 수정</th><th>관리</th></tr></thead><tbody>${result.logs.map(row => `<tr><td>${esc(row.work_date)}</td><td>${esc(row.customer_name)}</td><td><button class="link-button" data-action="work-log" data-id="${row.id}">${esc(row.title)}</button></td><td>${esc(row.owner) || '—'}</td><td><span class="badge">${workStatus[row.status]}</span></td><td>${fmt(row.updated_at)}</td><td>${canEdit() ? `<button class="small danger" data-action="work-delete" data-id="${row.id}">삭제</button>` : ''}</td></tr>`).join('')}</tbody></table></div>` : '<div class="empty"><h3>표시할 업무일지가 없습니다</h3><p>고객을 선택해 업무 내용을 등록하거나 검색 조건을 바꿔 보세요.</p></div>'}<div class="footer-row"><span>${result.total}건</span><div class="pager"><button class="small" data-action="work-prev" ${work.page <= 1 ? 'disabled' : ''}>이전</button><span>${work.page} / ${Math.max(1, Math.ceil(result.total / 25))}</span><button class="small" data-action="work-next" ${work.page >= Math.ceil(result.total / 25) ? 'disabled' : ''}>다음</button></div></div></div></section>`;
+    document.querySelector('#work-filter [name="status"]').closest('label').insertAdjacentHTML('afterend', `<label>업무 유형<select name="work_type"><option value="">모든 유형</option>${Object.entries(workTypes).map(([key, label]) => `<option value="${key}" ${f.work_type === key ? 'selected' : ''}>${label}</option>`).join('')}</select></label>`);
+    const table = document.querySelector('#content .classified-main table');
+    if (table) {
+      table.tHead.rows[0].cells[3].insertAdjacentHTML('beforebegin', '<th>업무 유형</th>');
+      result.logs.forEach((row, index) => table.tBodies[0].rows[index].cells[3].insertAdjacentHTML('beforebegin', `<td>${workTypes[row.work_type] ?? '미분류'}</td>`));
+    }
     decorateListing('work', result.total, result.page);
   }
   function customerDialog(id) {
@@ -80,6 +87,7 @@ export function createExtras(ctx) {
     const disabled = canEdit() ? '' : 'disabled';
     const choices = work.customers.map(c => `<option value="${c.id}" ${c.id === Number(row.customer_id) ? 'selected' : ''}>${esc(c.name)}</option>`).join('') + (id && !work.customers.some(c => c.id === row.customer_id) ? `<option value="${row.customer_id}" selected>${esc(row.customer_name)} (삭제된 고객)</option>` : '');
     openDialog(id ? '업무일지 상세' : '업무일지 작성', `<form id="work-form"><div class="form-grid"><label>고객 *<select name="customer_id" required ${disabled}><option value="">고객을 선택하세요</option>${choices}</select></label>${input('work_date', '업무일 *', row.work_date, 'type="date" required ' + disabled)}${input('title', '제목 *', row.title, 'required maxlength="150" ' + disabled)}${input('owner', '담당자', row.owner, 'maxlength="100" ' + disabled)}<label>진행 상태<select name="status" ${disabled}>${Object.entries(workStatus).map(([key, value]) => `<option value="${key}" ${row.status === key ? 'selected' : ''}>${value}</option>`).join('')}</select></label><label class="full">업무 내용<textarea class="work-content" name="content" maxlength="10000" rows="12" ${disabled}>${esc(row.content)}</textarea></label></div>${canEdit() ? '<div class="form-actions"><button type="button" data-action="close">취소</button><button class="primary">저장</button></div>' : ''}</form>`);
+    modal.querySelector('[name="status"]').closest('label').insertAdjacentHTML('afterend', `<label>업무 유형 *<select name="work_type" required ${disabled}><option value="">${id ? '유형 미지정' : '유형을 선택하세요'}</option>${Object.entries(workTypes).map(([key, label]) => `<option value="${key}" ${row.work_type === key ? 'selected' : ''}>${label}</option>`).join('')}</select></label>`);
   }
   function pathFromTree(tree, id) {
     if (!id) return '미분류';
@@ -167,5 +175,5 @@ export function createExtras(ctx) {
     }
     return false;
   }
-  return { loadCategories, categoryPath, leafSelect, attachCategoryPanel, renderWork, renderReports, action, submit, resetWorkPage: () => { work.page = 1; } };
+  return { loadCategories, categoryPath, leafSelect, attachCategoryPanel, renderWork, renderReports, action, submit, categoryDepth: (scope, id) => cache[scope].find(row => row.id === id)?.level ?? 0, resetWorkPage: () => { work.page = 1; }, clearWorkCustomer: () => { work.customer = null; work.page = 1; } };
 }

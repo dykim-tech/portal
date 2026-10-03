@@ -69,3 +69,16 @@
 .record-context-menu button{width:100%;border:0;background:transparent;text-align:left;padding:9px 12px}
 .record-context-menu button:hover,.record-context-menu button:focus-visible{background:var(--soft)}
 [data-theme=dark] .record-context-menu{background:#1a2c22}
+.bulk-toolbar{display:flex;align-items:center;flex-wrap:wrap;gap:9px;margin:-8px 0 20px;padding:14px 17px;border:1px solid var(--line);border-radius:8px;background:var(--soft)}
+.bulk-toolbar strong{margin-right:auto}.bulk-toolbar .bulk-count{font-size:.8125rem;color:var(--muted)}
+.bulk-error{flex-basis:100%;margin:3px 0 0;color:var(--danger);font-size:.875rem}
+.bulk-sidebar-row{display:flex;align-items:center;min-width:0;border-radius:6px}
+.bulk-sidebar-row>.category-link{flex:1;min-width:0}
+.bulk-check{display:flex;align-items:center;justify-content:center;flex:none;width:30px;height:32px;margin:0;cursor:pointer}
+.bulk-check input{width:18px;height:18px;margin:0;cursor:pointer}
+.bulk-cell{position:relative;padding-left:44px!important}
+.bulk-cell>.bulk-check{position:absolute;left:7px;top:50%;transform:translateY(-50%)}
+.bulk-selecting tbody tr:has(input[data-bulk-id]:checked),.bulk-sidebar-row:has(input[data-bulk-id]:checked){background:var(--soft)}
+.installation-sheet.bulk-selecting th:first-child{width:62px}
+.installation-sheet.bulk-selecting .bulk-cell{padding-left:27px!important}
+.installation-sheet.bulk-selecting .bulk-cell>.bulk-check{left:1px}

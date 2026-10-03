@@ -8,7 +8,7 @@ const state={user:null,view:'dashboard',page:1,filters:{},item:null,users:[],unr
 const allowedPageSizes=[25,50,70,100];
 function storedPageSize(key){try{const value=Number(localStorage.getItem('portal-page-size-'+key));return allowedPageSizes.includes(value)?value:50;}catch{return 50;}}
 const tableState={items:{size:storedPageSize('items'),sort:'updated_at',direction:'desc'},installations:{size:storedPageSize('installations'),sort:'updated_at',direction:'desc'},library:{size:storedPageSize('library'),sort:'name',direction:'asc'},work:{size:storedPageSize('work'),sort:'work_date',direction:'desc'},users:{size:storedPageSize('users'),page:1,sort:'username',direction:'asc'}};
-const tableColumns={items:['name','category','status','owner','due_date','updated_at','file_count'],installations:['id','customer','name','product_version','quantity','installed_on','completed_on','contact','engineer','notes'],library:['name','type','size','created_at',null],work:['work_date','customer','title','owner','status','updated_at',null],users:['name','username','email','role','active','created_at',null]};
+const tableColumns={items:['name','category','status','owner','due_date','updated_at','file_count'],installations:['id','customer','name','product_version','quantity','installed_on','completed_on','contact','engineer','notes'],library:['name','type','size','created_at',null],work:['work_date','customer','title','work_type','owner','status','updated_at',null],users:['name','username','email','role','active','created_at',null]};
 const fmt=v=>v?new Intl.DateTimeFormat('ko-KR',{dateStyle:'medium',timeStyle:'short',timeZone:'Asia/Seoul'}).format(new Date(v)):'—';
 const canEdit=()=>['admin','editor'].includes(state.user?.role);
 const options=(values,selected)=>values.map(v=>`<option value="${v}" ${v===selected?'selected':''}>${labels[v]??v}</option>`).join('');
@@ -36,7 +36,7 @@ function shell(){
 function updateNav(){document.querySelectorAll('[data-view]').forEach(b=>b.classList.toggle('active',b.dataset.view===state.view));const count=document.querySelector('#nav-count');if(count){count.textContent=state.unread;count.hidden=!state.unread;}const bread=document.querySelector('#breadcrumb');if(bread)bread.textContent={dashboard:'대시보드',installations:'설치관리',library:'자료 관리',items:'자산 관리',work:'업무관리',reports:'리포트',notifications:'기한 알림',users:'사용자 관리',settings:'설정'}[state.view];}
 async function refreshCount(){const result=await api('/notifications');state.unread=result.unread;updateNav();return result;}
 async function signedIn(user){state.user=user;state.view='dashboard';shell();await renderView();await refreshCount();clearInterval(pollTimer);pollTimer=setInterval(()=>{if(state.user)refreshCount().catch(()=>{});},60000);}
-async function renderView(){updateNav();if(state.view==='items')await renderItems();else if(state.view==='users')await showUsers();else if(state.view==='notifications')await renderNotifications();else if(state.view==='dashboard')await renderDashboard();else if(state.view==='installations')await renderInstallations();else if(state.view==='library')await renderLibrary();else if(state.view==='work')await extras.renderWork();else if(state.view==='reports')await extras.renderReports();else renderSettings();}
+async function renderView(){if(bulkMode&&bulkMode.view!==state.view)bulkMode=null;updateNav();if(state.view==='items')await renderItems();else if(state.view==='users')await showUsers();else if(state.view==='notifications')await renderNotifications();else if(state.view==='dashboard')await renderDashboard();else if(state.view==='installations')await renderInstallations();else if(state.view==='library')await renderLibrary();else if(state.view==='work')await extras.renderWork();else if(state.view==='reports')await extras.renderReports();else renderSettings();}
 async function renderItems(){
   await extras.loadCategories('items');
   const result=await api('/items?'+new URLSearchParams({...state.filters,...listingQuery('items',state.page)}));
@@ -59,6 +59,7 @@ function decorateListing(kind,total,page){
   footer.querySelector('.page-size-control')?.remove();
   footer.insertAdjacentHTML('afterbegin',`<label class="page-size-control">페이지당 <select data-page-size="${kind}" aria-label="페이지당 표시 건수">${allowedPageSizes.map(size=>`<option value="${size}" ${size===config.size?'selected':''}>${size}건</option>`).join('')}</select></label>`);
   const pages=Math.max(1,Math.ceil(total/config.size));pager.querySelector('span').textContent=`${page} / ${pages}`;const buttons=pager.querySelectorAll('button');buttons[0].disabled=page<=1;buttons[1].disabled=page>=pages;
+  decorateBulkSelection();
 }
 function resetListingPage(kind){if(kind==='items')state.page=1;else if(kind==='installations')features.installationPage=1;else if(kind==='library')features.libraryPage=1;else if(kind==='work')extras.resetWorkPage();else if(kind==='users')tableState.users.page=1;}
 function historyText(h){if(h.action!=='수정')return h.action==='등록'?'자산 정보 최초 등록':h.detail;try{return Object.entries(JSON.parse(h.detail)).map(([key,val])=>`${fields[key]??key}: ${labels[val.before]??val.before??'없음'} → ${labels[val.after]??val.after??'없음'}`).join('\n')||'변경 사항 없음';}catch{return h.detail;}}
@@ -104,6 +105,90 @@ function recordAt(target){
   return id&&/^\d+$/.test(id)?{kind,id}:null;
 }
 const recordActions={customer:['customer-edit','customer-delete'],work:['work-log','work-delete'],category:['category-rename','category-delete'],item:['item','delete-item'],installation:['installation','installation-delete'],folder:['rename-folder','delete-folder'],manual:['edit-manual','delete-manual'],user:['user','delete-user']};
+const bulkViews={customer:'work',work:'work',category:'items',item:'items',installation:'installations',folder:'library',manual:'library',user:'users'};
+const bulkLabels={customer:'고객',work:'업무일지',category:'자산 분류',item:'자산',installation:'설치정보',folder:'자료 폴더',manual:'자료 파일',user:'사용자'};
+const bulkSelectors={customer:'.classified-sidebar [data-action="work-customer"][data-id]',work:'tbody [data-action="work-log"][data-id]',category:'.classified-sidebar [data-action="category-select"][data-id]',item:'tbody [data-action="item"][data-id]',installation:'tbody [data-action="installation"][data-id]',folder:'.folder-tree-row [data-action="folder"][data-id], .file-table tbody [data-action="folder"][data-id]',manual:'.file-table tbody [data-action="preview"][data-id]',user:'tbody [data-action="user"][data-id]'};
+let bulkMode=null;
+function bulkCheck(id){
+  const label=document.createElement('label');label.className='bulk-check';
+  const box=document.createElement('input');box.type='checkbox';box.dataset.bulkId=id;box.checked=bulkMode.selected.has(id);box.setAttribute('aria-label',`${bulkLabels[bulkMode.kind]} 삭제 대상으로 선택`);
+  label.append(box);return label;
+}
+function updateBulkUI(){
+  if(!bulkMode)return;
+  document.querySelectorAll('#content input[data-bulk-id]').forEach(box=>{box.checked=bulkMode.selected.has(box.dataset.bulkId);box.disabled=Boolean(bulkMode.deleting);});
+  const bar=document.querySelector('#content .bulk-toolbar');if(!bar)return;
+  const count=bulkMode.selected.size;bar.querySelector('.bulk-count').textContent=bulkMode.deleting?'삭제 처리 중…':`${count}개 선택됨`;
+  const deleteButton=bar.querySelector('[data-action="bulk-delete"]');deleteButton.textContent=bulkMode.deleting?'삭제 중…':`선택한 ${count}개 삭제`;
+  bar.querySelectorAll('button').forEach(button=>{button.disabled=Boolean(bulkMode.deleting)||(button===deleteButton&&count===0);});
+}
+function decorateBulkSelection(){
+  if(!bulkMode||bulkMode.view!==state.view)return;
+  const content=document.querySelector('#content');
+  const bar=document.createElement('div');bar.className='bulk-toolbar';bar.setAttribute('role','region');bar.setAttribute('aria-label','여러 항목 삭제');
+  bar.innerHTML=`<strong>삭제할 ${bulkLabels[bulkMode.kind]} 선택</strong><span class="bulk-count" role="status"></span><button type="button" class="small" data-action="bulk-select-visible">현재 목록 모두 선택</button><button type="button" class="small" data-action="bulk-clear">선택 해제</button><button type="button" class="small" data-action="bulk-cancel">취소</button><button type="button" class="small danger" data-action="bulk-delete"></button>${bulkMode.error?`<p class="bulk-error" role="alert">${esc(bulkMode.error)}</p>`:''}`;
+  content.querySelector('.page-head')?.insertAdjacentElement('afterend',bar);
+  const seenRows=new Set();
+  for(const button of content.querySelectorAll(bulkSelectors[bulkMode.kind])){
+    const id=button.dataset.id;
+    if(bulkMode.kind==='user'&&Number(id)===state.user.id)continue;
+    const row=button.closest('tbody tr');
+    const name=row?(bulkMode.kind==='installation'?`${row.cells[1].textContent.trim()} / ${row.cells[2].textContent.trim()}`:bulkMode.kind==='work'?`${row.cells[1].textContent.trim()} / ${row.cells[2].textContent.trim()}`:bulkMode.kind==='user'?row.cells[0].textContent.trim():button.textContent.trim()):button.textContent.trim();
+    bulkMode.names.set(id,name.replace(/\s+/g,' ').slice(0,100));
+    if(row){
+      if(seenRows.has(row))continue;seenRows.add(row);
+      const cell=row.cells[0];cell.classList.add('bulk-cell');cell.prepend(bulkCheck(id));row.closest('table').classList.add('bulk-selecting');
+    }else if(bulkMode.kind==='folder'){
+      button.before(bulkCheck(id));
+    }else{
+      const wrapper=document.createElement('div');wrapper.className='bulk-sidebar-row';button.replaceWith(wrapper);wrapper.append(bulkCheck(id),button);
+    }
+  }
+  updateBulkUI();
+}
+async function startBulk(kind,id){
+  if(!canEdit()||!bulkViews[kind]||!/^\d+$/.test(String(id)))return;
+  bulkMode={kind,view:bulkViews[kind],selected:new Set([String(id)]),names:new Map(),error:''};
+  state.view=bulkMode.view;await renderView();
+  document.querySelector('#content .bulk-toolbar')?.scrollIntoView({block:'nearest'});
+}
+function bulkPath(kind,id){
+  const routes={customer:`/customers/${id}`,work:`/work-logs/${id}`,category:`/categories/${id}?scope=items`,item:`/items/${id}`,installation:`/installations/${id}`,folder:`/folders/${id}`,manual:`/manuals/${id}`,user:`/users/${id}`};
+  return routes[kind];
+}
+function bulkDepth(kind,id){
+  if(kind==='category')return extras.categoryDepth('items',Number(id));
+  if(kind!=='folder')return 0;
+  const byId=new Map((features.libraryTree??[]).map(row=>[row.id,row]));let depth=0,row=byId.get(Number(id));
+  while(row&&depth<10){depth++;row=byId.get(row.parent_id);}return depth;
+}
+async function deleteBulkSelection(){
+  if(!bulkMode||!canEdit()||!bulkMode.selected.size||bulkMode.deleting)return;
+  const mode=bulkMode,count=mode.selected.size;
+  const note=mode.kind==='customer'?' 연결된 설치정보·업무일지는 보존됩니다.':'';
+  const preview=[...mode.selected].slice(0,8).map(id=>`• ${mode.names.get(id)??'#'+id}`).join('\n');
+  if(!confirm(`선택한 ${bulkLabels[mode.kind]} ${count}개를 삭제할까요?\n${preview}${count>8?`\n외 ${count-8}개`:''}\n${note} 이 작업은 되돌릴 수 없습니다.`))return;
+  mode.deleting=true;updateBulkUI();
+  const ids=[...mode.selected].sort((a,b)=>bulkDepth(mode.kind,b)-bulkDepth(mode.kind,a));
+  const failed=[];let deleted=0;
+  for(const id of ids){
+    try{await api(bulkPath(mode.kind,id),{method:'DELETE'});deleted++;}
+    catch(error){failed.push({id,message:error.message});if(!state.user)break;}
+  }
+  mode.deleting=false;
+  if(!state.user){bulkMode=null;toast('로그인이 만료되었습니다. 다시 로그인한 뒤 삭제 결과를 확인해 주세요.');return;}
+  mode.selected=new Set(failed.map(row=>row.id));mode.error=failed.length?`${failed.length}개 항목을 삭제하지 못했습니다. ${failed[0].message}`:'';
+  if(deleted){
+    if(mode.kind==='customer')extras.clearWorkCustomer();
+    if(mode.kind==='category')delete state.filters.category_id;
+    if(mode.kind==='folder'){features.folder=null;features.libraryQuery='';}
+    resetListingPage(mode.view);
+  }
+  if(!failed.length)bulkMode=null;
+  await renderView();
+  if(deleted&&(mode.kind==='item'||mode.kind==='installation'))await refreshCount();
+  toast(failed.length?`${deleted}개 삭제, ${failed.length}개 실패. 화면에서 실패 이유를 확인해 주세요.`:`${deleted}개 항목을 삭제했습니다.`);
+}
 document.addEventListener('contextmenu',event=>{
   if(!state.user||!canEdit()||modal.open)return;
   const record=recordAt(event.target);
@@ -112,7 +197,7 @@ document.addEventListener('contextmenu',event=>{
   const actions=recordActions[record.kind];
   if(!actions)return;
   const showDelete=record.kind!=='user'||Number(record.id)!==state.user.id;
-  recordMenu.innerHTML=actions.slice(0,showDelete?2:1).map((action,index)=>`<button type="button" role="menuitem" class="${index?'danger':''}" data-action="${action}" data-id="${record.id}" ${record.kind==='category'?'data-scope="items"':''}>${index?'삭제':'수정'}</button>`).join('');
+  recordMenu.innerHTML=actions.slice(0,showDelete?2:1).map((action,index)=>`<button type="button" role="menuitem" class="${index?'danger':''}" data-action="${index?'bulk-start':action}" data-kind="${record.kind}" data-id="${record.id}" ${record.kind==='category'?'data-scope="items"':''}>${index?'삭제':'수정'}</button>`).join('');
   recordMenu.hidden=false;
   const x=event.clientX||event.target.getBoundingClientRect().left,y=event.clientY||event.target.getBoundingClientRect().bottom;
   recordMenu.style.left=Math.max(8,Math.min(x,window.innerWidth-recordMenu.offsetWidth-8))+'px';
@@ -127,10 +212,16 @@ window.addEventListener('resize',hideRecordMenu);
 document.addEventListener('click',async event=>{
   const button=event.target.closest('button');if(!button)return;
   try{
+    if(bulkMode?.deleting){toast('선택한 항목을 삭제하는 중입니다. 잠시 기다려 주세요.');return;}
     if(button.dataset.view){state.view=button.dataset.view;await renderView();return;}
     if(button.dataset.tableSort){const kind=button.dataset.tableSort,key=button.dataset.sort,config=tableState[kind];if(!tableColumns[kind]?.includes(key))return;config.direction=config.sort===key?(config.direction==='asc'?'desc':'asc'):['updated_at','created_at','work_date','installed_on','completed_on','due_date'].includes(key)?'desc':'asc';config.sort=key;resetListingPage(kind);await renderView();return;}
     const action=button.dataset.action,id=button.dataset.id;if(!action)return;
     if(action==='close'){modal.close();return;}
+    if(action==='bulk-start'){await startBulk(button.dataset.kind,id);return;}
+    if(action==='bulk-select-visible'){document.querySelectorAll('#content input[data-bulk-id]').forEach(box=>{if(box.getClientRects().length)bulkMode.selected.add(box.dataset.bulkId);});updateBulkUI();return;}
+    if(action==='bulk-clear'){bulkMode.selected.clear();updateBulkUI();return;}
+    if(action==='bulk-cancel'){bulkMode=null;await renderView();return;}
+    if(action==='bulk-delete'){await deleteBulkSelection();return;}
     if(await extras.action(action,id,button))return;
     if(await featureAction(action,id,button))return;
     if(action==='new-item'||action==='item')await itemDialog(id);
@@ -149,6 +240,7 @@ document.addEventListener('click',async event=>{
   }catch(error){if(modal.open)document.querySelector('#dialog-error').textContent=error.message;else toast(error.message);}
 });
 document.addEventListener('change',async event=>{const select=event.target.closest('select[data-page-size]');if(!select)return;const kind=select.dataset.pageSize,size=Number(select.value);if(!allowedPageSizes.includes(size)||!tableState[kind])return;try{tableState[kind].size=size;try{localStorage.setItem('portal-page-size-'+kind,String(size));}catch{}resetListingPage(kind);await renderView();}catch(error){toast(error.message);}});
+document.addEventListener('change',event=>{const box=event.target.closest('input[data-bulk-id]');if(!box||!bulkMode)return;if(box.checked)bulkMode.selected.add(box.dataset.bulkId);else bulkMode.selected.delete(box.dataset.bulkId);updateBulkUI();});
 document.addEventListener('submit',async event=>{
   const form=event.target;if(!form.id)return;event.preventDefault();const submit=form.querySelector('button[type="submit"],button:not([type])');const originalSubmitText=submit?.textContent;const errorBox=form.querySelector('.error')??document.querySelector('#dialog-error');if(errorBox)errorBox.textContent='';if(submit){submit.disabled=true;if(form.id==='installation-form')submit.textContent='저장 중…';else if(['upload-form','manual-form','installation-upload'].includes(form.id))submit.textContent='업로드 중…';}
   try{
