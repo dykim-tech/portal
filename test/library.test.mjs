@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createPortal } from '../server/app.mjs';
 
-test('two-level library, editing and legacy migration preserve documents', async t => {
+test('nested library folders, editing and restarts preserve documents', async t => {
   const dataDir = mkdtempSync(join(tmpdir(), 'portal-library-'));
   const origin = 'http://localhost:3100';
   let portal = createPortal({ dataDir, origin });
@@ -32,9 +32,15 @@ test('two-level library, editing and legacy migration preserve documents', async
     const major = (await request('/folders', 'POST', { name: 'FortiGate' })).data.id;
     const middle = (await request('/folders', 'POST', { name: 'VPN', parent_id: major })).data.id;
     const other = (await request('/folders', 'POST', { name: '일반', parent_id: major })).data.id;
-    let fileId;
-    await t.test('enforces two levels and requires a middle category before upload', async () => {
-      assert.equal((await request('/folders', 'POST', { name: '하위', parent_id: middle })).status, 400);
+    let fileId, deepFolder, deepFileId;
+    await t.test('creates folders below folders and allows uploads in deep folders', async () => {
+      const leaf = (await request('/folders', 'POST', { name: '소분류', parent_id: middle })).data.id;
+      const nested = (await request('/folders', 'POST', { name: '하위 폴더', parent_id: leaf })).data.id;
+      deepFolder = (await request('/folders', 'POST', { name: '더 아래', parent_id: nested })).data.id;
+      const deepUpload = await request('/manuals?folder=' + deepFolder, 'POST', upload());
+      assert.equal(deepUpload.status, 201);
+      deepFileId = deepUpload.data.id;
+      assert.deepEqual((await request('/library?folder=' + deepFolder)).data.breadcrumbs.map(row => row.name), ['FortiGate', 'VPN', '소분류', '하위 폴더', '더 아래']);
       for (const path of ['/manuals', '/manuals?folder=' + major, '/manuals?folder=999999']) {
         assert.ok([400, 404].includes((await request(path, 'POST', upload())).status));
       }
@@ -96,7 +102,7 @@ test('two-level library, editing and legacy migration preserve documents', async
       }
       assert.equal((await request('/manuals/' + fileId, 'PUT', { name: '안내.txt' }, '')).status, 401);
     });
-    await t.test('restart flattens legacy categories with collisions, preserving IDs and both storage formats', async () => {
+    await t.test('restart keeps nested folders, IDs, files and both storage formats', async () => {
       const stamp = new Date().toISOString();
       const insertFolder = (parent, name) => Number(portal.db.prepare('INSERT INTO folders(parent_id,name,created_at) VALUES(?,?,?)').run(parent, name, stamp).lastInsertRowid);
       const collision = insertFolder(major, 'VPN 연결 · StrongSwan');
@@ -116,11 +122,13 @@ test('two-level library, editing and legacy migration preserve documents', async
       await restart();
       const tree = (await request('/library')).data.tree;
       assert.equal(tree.length, foldersBefore);
-      assert.equal(tree.find(row => row.id === leaf).parent_id, major);
-      assert.equal(tree.find(row => row.id === leaf).name, 'VPN 연결 · StrongSwan (2)');
+      assert.equal(tree.find(row => row.id === leaf).parent_id, middle);
+      assert.equal(tree.find(row => row.id === leaf).name, 'StrongSwan');
       assert.equal(tree.find(row => row.id === collision).name, 'VPN 연결 · StrongSwan');
-      assert.equal(tree.find(row => row.id === deeper).name, 'VPN 연결 · StrongSwan · 추가');
-      assert.equal(tree.find(row => row.id === deeper).parent_id, major);
+      assert.equal(tree.find(row => row.id === deeper).name, '추가');
+      assert.equal(tree.find(row => row.id === deeper).parent_id, leaf);
+      assert.equal((await request('/library?folder=' + deepFolder)).data.files[0].id, deepFileId);
+      assert.equal((await request('/manuals/' + deepFileId + '/download')).data, '원본 자료 본문');
       assert.equal((await request('/library?folder=' + leaf)).data.files[0].id, fileId);
       assert.equal((await request('/manuals/' + fileId + '/download')).data, '원본 자료 본문');
       assert.equal((await request('/manuals/' + legacy + '/download')).data, 'legacy');

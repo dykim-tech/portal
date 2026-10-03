@@ -68,7 +68,9 @@ test('categories, installation files, customer work logs, and CSV reports', asyn
 
     const large = (await request('/folders', 'POST', { name: '제품' })).data.id;
     const middle = (await request('/folders', 'POST', { name: '서버', parent_id: large })).data.id;
-    assert.equal((await request('/folders', 'POST', { name: '너무 깊음', parent_id: middle })).status, 400);
+    const leaf = await request('/folders', 'POST', { name: '소분류', parent_id: middle });
+    assert.equal(leaf.status, 201);
+    assert.deepEqual((await request('/library?folder=' + leaf.data.id)).data.breadcrumbs.map(row => row.name), ['제품', '서버', '소분류']);
     const manual = new FormData();
     manual.append('file', new Blob(['설치 순서']), '안내.txt');
     assert.equal((await request('/manuals?folder=' + middle, 'POST', manual)).status, 201);

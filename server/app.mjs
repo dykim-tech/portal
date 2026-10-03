@@ -13,6 +13,7 @@ import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openDatabase, transaction, scanDeadlines } from './db.mjs';
 import { listing } from './listing.mjs';
+import { registerBackups, recoverInterruptedRestore } from './backups.mjs';
 
 const scrypt = promisify(scryptCallback);
 const hash = value => createHash('sha256').update(value).digest('hex');
@@ -69,11 +70,15 @@ function itemData(body, db) {
 
 export function createPortal(options = {}) {
   const dataDir = resolve(options.dataDir ?? process.env.DATA_DIR ?? './data');
+  recoverInterruptedRestore(dataDir);
+  const backupDir = resolve(options.backupDir ?? process.env.BACKUP_DIR ?? './backups');
   const db = openDatabase(dataDir);
   initializeFeatures(db);
   initializeUploadChunks(db);
   initializeWork(db);
   const app = express();
+  const instanceId = randomBytes(12).toString('hex');
+  const maintenance = { restoring: false };
   const origin = new URL(options.origin ?? process.env.APP_ORIGIN ?? 'http://localhost:3000').origin;
   const secure = options.secure ?? process.env.COOKIE_SECURE === 'true';
   if (process.env.NODE_ENV === 'production' && (!secure || !origin.startsWith('https://'))) throw new Error('Production requires HTTPS APP_ORIGIN and COOKIE_SECURE=true.');
@@ -101,6 +106,10 @@ export function createPortal(options = {}) {
     }
     next();
   });
+  app.use('/api', (req, res, next) => {
+    if (maintenance.restoring && req.path !== '/health') return res.status(503).json({ error: '백업 시점으로 복구하는 중입니다. 잠시 후 다시 접속해 주세요.' });
+    next();
+  });
   const cookieOptions = { httpOnly: true, secure, sameSite: 'strict', path: '/' };
   function session(res, user) {
     const token = randomBytes(32).toString('hex');
@@ -121,7 +130,7 @@ export function createPortal(options = {}) {
   const item = id => { const row = db.prepare('SELECT * FROM items WHERE id=?').get(id); if (!row) throw fail(404, '물품을 찾을 수 없습니다.'); return row; };
   const history = (id, actor, action, detail) => db.prepare('INSERT INTO history(item_id,actor_id,action,detail,created_at) VALUES(?,?,?,?,?)').run(id, actor, action, detail, now());
 
-  app.get('/api/health', (_req,res) => res.json({ ok: true, version: 3 }));
+  app.get('/api/health', (_req,res) => res.json({ ok: true, version: 3, instance_id: instanceId, restore_result: options.restoreResult ?? null }));
   app.get('/api/auth/me', (req,res) => res.json({ user: req.user ? publicUser(req.user) : null, setupRequired: Boolean(setupToken) }));
   app.post('/api/auth/setup', async (req,res) => {
     limiter(req, 'setup');
@@ -253,6 +262,7 @@ export function createPortal(options = {}) {
   registerFeatures(app, { db, requireRole, upload });
   registerWork(app, { db, requireRole });
   registerReports(app, { db });
+  registerBackups(app, { db, backupDir, requireRole, maintenance, onRestore: options.onRestore });
   app.use('/api',(_req,_res,next)=>next(fail(404,'요청한 기능을 찾을 수 없습니다.')));
   for (const dir of ['build','cmaps','standard_fonts','wasm']) app.use('/vendor/pdfjs/'+dir, express.static(resolve(dirname(fileURLToPath(import.meta.url)), '../node_modules/pdfjs-dist',dir)));
   app.use(express.static(resolve(dirname(fileURLToPath(import.meta.url)),'../public'),{etag:true}));
@@ -264,6 +274,6 @@ export function createPortal(options = {}) {
     res.status(status).json({error:status>=500?'처리 중 오류가 발생했습니다. 다시 시도해 주세요.':err.message});
   });
   scanDeadlines(db);
-  return { app, db, tokenPath, tick:()=>scanDeadlines(db) };
+  return { app, db, tokenPath, tick:()=>{ if (!maintenance.restoring) scanDeadlines(db); }, instanceId, maintenance };
 }
 

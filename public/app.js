@@ -4,7 +4,7 @@ const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&
 const labels={general:'일반 비품',it:'IT 장비',active:'사용 중',stored:'보관 중',repair:'점검·수리',retired:'사용 종료',admin:'관리자',editor:'편집자',viewer:'조회자',upcoming:'기한 예정',today:'오늘 기한',overdue:'기한 경과'};
 const MAX_UPLOAD_SIZE=500*1024*1024;
 const fields={name:'자산명',asset_code:'관리번호',category:'분류',status:'상태',quantity:'수량',location:'보관 위치',owner:'담당자',serial:'시리얼 번호',description:'설명',due_date:'관리 기한',reminder_days:'사전 알림'};
-const state={user:null,view:'dashboard',page:1,filters:{},item:null,users:[],unread:0};
+const state={user:null,view:'dashboard',page:1,filters:{},item:null,users:[],unread:0,backups:[]};
 const allowedPageSizes=[25,50,70,100];
 function storedPageSize(key){try{const value=Number(localStorage.getItem('portal-page-size-'+key));return allowedPageSizes.includes(value)?value:50;}catch{return 50;}}
 const tableState={items:{size:storedPageSize('items'),sort:'updated_at',direction:'desc'},installations:{size:storedPageSize('installations'),sort:'updated_at',direction:'desc'},library:{size:storedPageSize('library'),sort:'name',direction:'asc'},work:{size:storedPageSize('work'),sort:'work_date',direction:'desc'},users:{size:storedPageSize('users'),page:1,sort:'username',direction:'asc'}};
@@ -29,14 +29,14 @@ function authPage(setup){
   else {emailField.closest('label').outerHTML=loginField;root.querySelector('.auth-note').textContent='기존 계정은 이전 이메일의 @ 앞부분을 아이디로 입력하세요. 아이디가 겹치면 관리자에게 확인해 주세요.';}
 }
 function shell(){
-  const menus=[['dashboard','◫','대시보드'],['installations','⌘','설치관리'],['library','▤','자료 관리'],['items','▦','자산 관리'],['work','▤','업무관리'],['reports','▥','리포트'],...(state.user.role==='admin'?[['users','♙','사용자 관리']]:[]),['settings','⚙','설정']];
+  const menus=[['dashboard','◫','대시보드'],['installations','⌘','설치관리'],['library','▤','자료 관리'],['items','▦','자산 관리'],['work','▤','업무관리'],['reports','▥','리포트'],...(state.user.role==='admin'?[['users','♙','사용자 관리'],['backups','◈','백업/복구']]:[]),['settings','⚙','설정']];
   root.innerHTML=`<div class="layout"><aside class="sidebar"><div class="brand"><img src="/favicon.svg" alt=""><div>PORTAL<small>PERSONAL WORKSPACE</small></div></div><nav class="nav" aria-label="주 메뉴">${menus.map(([view,icon,name])=>`<button data-view="${view}"><span class="nav-symbol">${icon}</span>${name}</button>`).join('')}</nav><div class="sidebar-foot"><a href="https://github.com/dykim-tech/portal" target="_blank" rel="noopener">GitHub 저장소</a><div class="account"><strong>${esc(state.user.name)}</strong><small>${labels[state.user.role]}</small><div class="account-actions"><button data-action="password">비밀번호 변경</button><button data-action="logout">로그아웃</button></div></div></div></aside><div class="workspace"><header class="topbar"><span>내 작업 공간 / <strong id="breadcrumb"></strong></span><div class="topbar-tools"><button class="small" data-view="notifications">기한 알림 <span id="nav-count" class="badge" hidden></span></button><span>${esc(state.user.name)} · ${labels[state.user.role]}</span><button class="small mobile-account" data-action="account">계정</button></div></header><main class="content" id="content"></main></div></div>`;
   updateNav();
 }
-function updateNav(){document.querySelectorAll('[data-view]').forEach(b=>b.classList.toggle('active',b.dataset.view===state.view));const count=document.querySelector('#nav-count');if(count){count.textContent=state.unread;count.hidden=!state.unread;}const bread=document.querySelector('#breadcrumb');if(bread)bread.textContent={dashboard:'대시보드',installations:'설치관리',library:'자료 관리',items:'자산 관리',work:'업무관리',reports:'리포트',notifications:'기한 알림',users:'사용자 관리',settings:'설정'}[state.view];}
+function updateNav(){document.querySelectorAll('[data-view]').forEach(b=>b.classList.toggle('active',b.dataset.view===state.view));const count=document.querySelector('#nav-count');if(count){count.textContent=state.unread;count.hidden=!state.unread;}const bread=document.querySelector('#breadcrumb');if(bread)bread.textContent={dashboard:'대시보드',installations:'설치관리',library:'자료 관리',items:'자산 관리',work:'업무관리',reports:'리포트',notifications:'기한 알림',users:'사용자 관리',backups:'백업/복구',settings:'설정'}[state.view];}
 async function refreshCount(){const result=await api('/notifications');state.unread=result.unread;updateNav();return result;}
 async function signedIn(user){state.user=user;state.view='dashboard';shell();await renderView();await refreshCount();clearInterval(pollTimer);pollTimer=setInterval(()=>{if(state.user)refreshCount().catch(()=>{});},60000);}
-async function renderView(){if(bulkMode&&bulkMode.view!==state.view)bulkMode=null;updateNav();if(state.view==='items')await renderItems();else if(state.view==='users')await showUsers();else if(state.view==='notifications')await renderNotifications();else if(state.view==='dashboard')await renderDashboard();else if(state.view==='installations')await renderInstallations();else if(state.view==='library')await renderLibrary();else if(state.view==='work')await extras.renderWork();else if(state.view==='reports')await extras.renderReports();else renderSettings();}
+async function renderView(){if(bulkMode&&bulkMode.view!==state.view)bulkMode=null;updateNav();if(state.view==='items')await renderItems();else if(state.view==='users')await showUsers();else if(state.view==='backups')await renderBackups();else if(state.view==='notifications')await renderNotifications();else if(state.view==='dashboard')await renderDashboard();else if(state.view==='installations')await renderInstallations();else if(state.view==='library')await renderLibrary();else if(state.view==='work')await extras.renderWork();else if(state.view==='reports')await extras.renderReports();else renderSettings();}
 async function renderItems(){
   await extras.loadCategories('items');
   const result=await api('/items?'+new URLSearchParams({...state.filters,...listingQuery('items',state.page)}));
@@ -222,6 +222,8 @@ document.addEventListener('click',async event=>{
     if(action==='bulk-clear'){bulkMode.selected.clear();updateBulkUI();return;}
     if(action==='bulk-cancel'){bulkMode=null;await renderView();return;}
     if(action==='bulk-delete'){await deleteBulkSelection();return;}
+    if(action==='backup-create'){await api('/backups',{method:'POST',body:{}});await renderBackups();toast('백업을 저장했습니다. 목록에서 다운로드할 수 있습니다.');return;}
+    if(action==='backup-restore'){backupRestoreDialog();return;}
     if(await extras.action(action,id,button))return;
     if(await featureAction(action,id,button))return;
     if(action==='new-item'||action==='item')await itemDialog(id);
@@ -245,6 +247,14 @@ document.addEventListener('submit',async event=>{
   const form=event.target;if(!form.id)return;event.preventDefault();const submit=form.querySelector('button[type="submit"],button:not([type])');const originalSubmitText=submit?.textContent;const errorBox=form.querySelector('.error')??document.querySelector('#dialog-error');if(errorBox)errorBox.textContent='';if(submit){submit.disabled=true;if(form.id==='installation-form')submit.textContent='저장 중…';else if(['upload-form','manual-form','installation-upload'].includes(form.id))submit.textContent='업로드 중…';}
   try{
     const values=Object.fromEntries(new FormData(form));
+    if(form.id==='backup-restore-form'){
+      const previous=await (await fetch('/api/health',{cache:'no-store'})).json();
+      const started=await api('/backups/'+encodeURIComponent(values.name)+'/restore',{method:'POST',body:{confirm:values.name}});
+      modal.close();
+      try{await waitForRestore(started.restore_id,previous.instance_id);}
+      catch(error){document.querySelector('#content').innerHTML=pageHead('RESTORE STATUS','복구 결과 확인 필요',error.message)+'<section class="panel"><div class="empty"><h3>포털 상태를 확인해 주세요</h3><p>새로고침 후에도 접속되지 않으면 운영 기록(data/server.log)을 확인해 주세요.</p></div></section>';}
+      return;
+    }
     if(await extras.submit(form,values))return;
     if(await featureSubmit(form,values))return;
     if(form.id==='auth-form'){const result=await api('/auth/'+(form.dataset.setup==='true'?'setup':'login'),{method:'POST',body:values});await signedIn(result.user);}
@@ -321,7 +331,7 @@ function folderTree(tree,parent=null,depth=0){
  return tree.filter(f=>f.parent_id===parent).map(f=>{
   const hasChildren=tree.some(child=>child.parent_id===f.id),expanded=features.expandedFolders.has(f.id);
   const toggle=hasChildren?`<button class="folder-tree-toggle" data-action="folder-toggle" data-id="${f.id}" data-name="${esc(f.name)}" aria-expanded="${expanded}" aria-controls="folder-children-${f.id}" aria-label="${esc(f.name)} ${expanded?'접기':'펼치기'}">${expanded?'−':'＋'}</button>`:'<span class="folder-tree-toggle-spacer" aria-hidden="true"></span>';
-  return `<div class="folder-tree-row ${features.folder===f.id?'selected':''}" style="padding-left:${Math.min(depth,3)*12}px">${toggle}<button class="folder-tree-link" data-action="folder" data-id="${f.id}"><span aria-hidden="true">▱</span>${esc(f.name)}</button></div>${hasChildren?`<div id="folder-children-${f.id}" role="group" ${expanded?'':'hidden'}>${folderTree(tree,f.id,depth+1)}</div>`:''}`;
+  return `<div class="folder-tree-row ${features.folder===f.id?'selected':''}" style="padding-left:${Math.min(depth,8)*12}px">${toggle}<button class="folder-tree-link" data-action="folder" data-id="${f.id}"><span aria-hidden="true">▱</span>${esc(f.name)}</button></div>${hasChildren?`<div id="folder-children-${f.id}" role="group" ${expanded?'':'hidden'}>${folderTree(tree,f.id,depth+1)}</div>`:''}`;
  }).join('');
 }
 async function renderLibrary(){
@@ -330,24 +340,57 @@ async function renderLibrary(){
  features.libraryTree=d.tree;
  const folderById=new Map(d.tree.map(f=>[f.id,f]));
  for(let current=folderById.get(features.folder);current?.parent_id!=null;current=folderById.get(current.parent_id))features.expandedFolders.add(current.parent_id);
- const controls=canEdit()?`<div class="head-actions">${d.folder?`<button data-action="rename-folder" data-id="${d.folder.id}">분류 이름 변경</button>`:''}${features.folderDepth<2?`<button data-action="new-folder">＋ ${['대분류','중분류'][features.folderDepth]} 등록</button>`:''}${features.folderDepth===2?'<button class="primary" data-action="upload-manual">＋ 자료 등록</button>':''}</div>`:'';
- document.querySelector('#content').innerHTML=pageHead('DOCUMENT LIBRARY','자료 관리','대분류 · 중분류로 자료를 정리하고 등록한 이름과 분류를 수정하세요.',controls)+`<section class="panel explorer"><aside class="folder-tree"><div class="folder-tree-title">자료 분류</div><button class="folder-tree-link ${features.folder===null?'selected':''}" data-action="folder"><span>▱</span>전체 자료</button>${folderTree(d.tree)}</aside><div class="explorer-main"><div class="explorer-toolbar"><nav class="breadcrumbs" aria-label="폴더 경로"><button data-action="folder">전체 자료</button>${d.breadcrumbs.map(f=>`<span>/</span><button data-action="folder" data-id="${f.id}">${esc(f.name)}</button>`).join('')}</nav><form id="library-search" class="library-search"><input name="q" aria-label="현재 폴더 검색" placeholder="현재 폴더에서 검색" value="${esc(features.libraryQuery)}"><button>검색</button></form></div><div class="table-wrap"><table class="file-table"><thead><tr><th>이름</th><th>유형</th><th>크기</th><th>등록일</th><th>관리</th></tr></thead><tbody>${d.folders.map(f=>`<tr><td><button class="file-name" data-action="folder" data-id="${f.id}"><span class="folder-icon" aria-hidden="true">▰</span>${esc(f.name)}</button></td><td>${['대분류','중분류'][features.folderDepth]??'폴더'}</td><td>—</td><td>${fmt(f.created_at)}</td><td>${canEdit()?`<div class="file-actions"><button class="small" data-action="rename-folder" data-id="${f.id}">이름 변경</button><button class="small danger" data-action="delete-folder" data-id="${f.id}">삭제</button></div>`:''}</td></tr>`).join('')}${d.files.map(f=>`<tr><td><button class="file-name" data-action="preview" data-id="${f.id}"><span class="extension-icon">${esc(fileType(f.name))}</span><span>${esc(f.name)}<span class="secondary-line">${esc(f.uploaded_by_name)}</span></span></button></td><td>${esc(fileType(f.name))}</td><td>${fileSize(f.size)}</td><td>${fmt(f.created_at)}</td><td><div class="file-actions"><a href="/api/manuals/${f.id}/download">다운로드</a>${canEdit()?`<button class="small" data-action="edit-manual" data-id="${f.id}">수정</button><button class="small danger" data-action="delete-manual" data-id="${f.id}">삭제</button>`:''}</div></td></tr>`).join('')}</tbody></table></div>${!d.folders.length&&!d.files.length?'<div class="empty"><h3>표시할 폴더나 파일이 없습니다</h3><p>새 폴더를 만들거나 자료를 등록하세요.<br>검색 중이라면 검색어를 바꿔 보세요.</p></div>':''}<div class="footer-row"><span>폴더 ${d.folders.length}개 · 파일 ${d.total}개</span><div class="pager"><button class="small" data-action="library-prev" ${d.page<=1?'disabled':''}>이전</button><span>${d.page} / ${Math.max(1,Math.ceil(d.total/50))}</span><button class="small" data-action="library-next" ${d.page>=Math.ceil(d.total/50)?'disabled':''}>다음</button></div></div></div></section><p class="help-line">대분류→중분류에서 자료를 등록합니다. 분류 이름과 자료명·소속 분류를 수정할 수 있습니다. 파일당 최대 500MB · PDF, PNG, JPG, GIF, WebP, 텍스트 파일 미리보기 지원. Office·HWP 등 그 외 파일은 다운로드로 확인하세요.</p>`;
+ const nextFolderName=['대분류','중분류','소분류'][features.folderDepth]??'하위 폴더';
+ const controls=canEdit()?`<div class="head-actions">${d.folder?`<button data-action="rename-folder" data-id="${d.folder.id}">폴더 이름 변경</button>`:''}<button data-action="new-folder">＋ ${nextFolderName} 등록</button>${features.folderDepth>=2?'<button class="primary" data-action="upload-manual">＋ 자료 등록</button>':''}</div>`:'';
+ document.querySelector('#content').innerHTML=pageHead('DOCUMENT LIBRARY','자료 관리','대분류 · 중분류 · 소분류와 하위 폴더로 자료를 정리하세요.',controls)+`<section class="panel explorer"><aside class="folder-tree"><div class="folder-tree-title">자료 분류</div><button class="folder-tree-link ${features.folder===null?'selected':''}" data-action="folder"><span>▱</span>전체 자료</button>${folderTree(d.tree)}</aside><div class="explorer-main"><div class="explorer-toolbar"><nav class="breadcrumbs" aria-label="폴더 경로"><button data-action="folder">전체 자료</button>${d.breadcrumbs.map(f=>`<span>/</span><button data-action="folder" data-id="${f.id}">${esc(f.name)}</button>`).join('')}</nav><form id="library-search" class="library-search"><input name="q" aria-label="현재 폴더 검색" placeholder="현재 폴더에서 검색" value="${esc(features.libraryQuery)}"><button>검색</button></form></div><div class="table-wrap"><table class="file-table"><thead><tr><th>이름</th><th>유형</th><th>크기</th><th>등록일</th><th>관리</th></tr></thead><tbody>${d.folders.map(f=>`<tr><td><button class="file-name" data-action="folder" data-id="${f.id}"><span class="folder-icon" aria-hidden="true">▰</span>${esc(f.name)}</button></td><td>${['대분류','중분류','소분류'][features.folderDepth]??'하위 폴더'}</td><td>—</td><td>${fmt(f.created_at)}</td><td>${canEdit()?`<div class="file-actions"><button class="small" data-action="rename-folder" data-id="${f.id}">이름 변경</button><button class="small danger" data-action="delete-folder" data-id="${f.id}">삭제</button></div>`:''}</td></tr>`).join('')}${d.files.map(f=>`<tr><td><button class="file-name" data-action="preview" data-id="${f.id}"><span class="extension-icon">${esc(fileType(f.name))}</span><span>${esc(f.name)}<span class="secondary-line">${esc(f.uploaded_by_name)}</span></span></button></td><td>${esc(fileType(f.name))}</td><td>${fileSize(f.size)}</td><td>${fmt(f.created_at)}</td><td><div class="file-actions"><a href="/api/manuals/${f.id}/download">다운로드</a>${canEdit()?`<button class="small" data-action="edit-manual" data-id="${f.id}">수정</button><button class="small danger" data-action="delete-manual" data-id="${f.id}">삭제</button>`:''}</div></td></tr>`).join('')}</tbody></table></div>${!d.folders.length&&!d.files.length?'<div class="empty"><h3>표시할 폴더나 파일이 없습니다</h3><p>새 폴더를 만들거나 자료를 등록하세요.<br>검색 중이라면 검색어를 바꿔 보세요.</p></div>':''}<div class="footer-row"><span>폴더 ${d.folders.length}개 · 파일 ${d.total}개</span><div class="pager"><button class="small" data-action="library-prev" ${d.page<=1?'disabled':''}>이전</button><span>${d.page} / ${Math.max(1,Math.ceil(d.total/50))}</span><button class="small" data-action="library-next" ${d.page>=Math.ceil(d.total/50)?'disabled':''}>다음</button></div></div></div></section><p class="help-line">중분류와 그 아래 하위 폴더에서 자료를 등록합니다. 폴더 아래에 폴더를 계속 만들고 자료를 이동할 수 있습니다. 파일당 최대 500MB · PDF, PNG, JPG, GIF, WebP, 텍스트 파일 미리보기 지원. Office·HWP 등 그 외 파일은 다운로드로 확인하세요.</p>`;
  decorateListing('library',d.total,d.page);
+}
+function libraryFolderPath(folder,byId){
+ const names=[],seen=new Set();
+ for(let current=folder;current&&!seen.has(current.id);current=byId.get(current.parent_id)){names.unshift(current.name);seen.add(current.id);}
+ return names.join(' / ');
 }
 async function manualEditDialog(id){
  const {file}=await api('/manuals/'+id);
  const tree=features.libraryTree??[],byId=new Map(tree.map(folder=>[folder.id,folder]));
- const middle=tree.filter(folder=>folder.parent_id&&byId.get(folder.parent_id)?.parent_id===null);
- const legacy=!middle.some(folder=>folder.id===file.folder_id);
- openDialog('자료 수정',`<form id="manual-edit-form" data-id="${file.id}">${input('name','자료명 *',file.name,'required maxlength="240"')}<p class="help-line">파일 확장자는 유지해 주세요.</p><label>소속 분류<select name="folder_id">${legacy?`<option value="${file.folder_id??''}">현재 위치 유지 (기존 자료)</option>`:''}${middle.map(folder=>`<option value="${folder.id}" ${folder.id===file.folder_id?'selected':''}>${esc(byId.get(folder.parent_id).name)} / ${esc(folder.name)}</option>`).join('')}</select></label><div class="form-actions"><button type="button" data-action="close">취소</button><button class="primary">저장</button></div></form>`);
+ const destinations=tree.filter(folder=>folder.parent_id);
+ const legacy=!destinations.some(folder=>folder.id===file.folder_id);
+ openDialog('자료 수정',`<form id="manual-edit-form" data-id="${file.id}">${input('name','자료명 *',file.name,'required maxlength="240"')}<p class="help-line">파일 확장자는 유지해 주세요.</p><label>소속 폴더<select name="folder_id">${legacy?`<option value="${file.folder_id??''}">현재 위치 유지 (기존 자료)</option>`:''}${destinations.map(folder=>`<option value="${folder.id}" ${folder.id===file.folder_id?'selected':''}>${esc(libraryFolderPath(folder,byId))}</option>`).join('')}</select></label><div class="form-actions"><button type="button" data-action="close">취소</button><button class="primary">저장</button></div></form>`);
 }
 async function manualMoveDialog(id){
  const [{file},library]=await Promise.all([api('/manuals/'+id),api('/library')]);
  const byId=new Map(library.tree.map(folder=>[folder.id,folder]));
- const destinations=library.tree.filter(folder=>folder.parent_id&&byId.get(folder.parent_id)?.parent_id===null&&folder.id!==file.folder_id);
- const current=byId.get(file.folder_id),parent=byId.get(current?.parent_id);
- const currentPath=current?`${parent?parent.name+' / ':''}${current.name}`:'미분류 (기존 자료)';
- openDialog('자료 이동',`<form id="manual-move-form" data-id="${file.id}"><p><strong>${esc(file.name)}</strong></p><p class="help-line">현재 위치: ${esc(currentPath)}</p><label>이동할 위치 *<select name="folder_id" required><option value="">위치를 선택하세요</option>${destinations.map(folder=>`<option value="${folder.id}">${esc(byId.get(folder.parent_id).name)} / ${esc(folder.name)}</option>`).join('')}</select></label>${destinations.length?'':'<p class="help-line">이동할 중분류가 없습니다. 자료 관리에서 다른 중분류를 먼저 등록해 주세요.</p>'}<div class="form-actions"><button type="button" data-action="close">취소</button><button class="primary" ${destinations.length?'':'disabled'}>이동</button></div></form>`);
+ const destinations=library.tree.filter(folder=>folder.parent_id&&folder.id!==file.folder_id);
+ const current=byId.get(file.folder_id);
+ const currentPath=current?libraryFolderPath(current,byId):'미분류 (기존 자료)';
+ openDialog('자료 이동',`<form id="manual-move-form" data-id="${file.id}"><p><strong>${esc(file.name)}</strong></p><p class="help-line">현재 위치: ${esc(currentPath)}</p><label>이동할 위치 *<select name="folder_id" required><option value="">위치를 선택하세요</option>${destinations.map(folder=>`<option value="${folder.id}">${esc(libraryFolderPath(folder,byId))}</option>`).join('')}</select></label>${destinations.length?'':'<p class="help-line">이동할 폴더가 없습니다. 자료 관리에서 다른 하위 폴더를 먼저 등록해 주세요.</p>'}<div class="form-actions"><button type="button" data-action="close">취소</button><button class="primary" ${destinations.length?'':'disabled'}>이동</button></div></form>`);
+}
+function backupSize(bytes){return bytes>=1073741824?(bytes/1073741824).toFixed(2)+' GB':bytes>=1048576?(bytes/1048576).toFixed(1)+' MB':(bytes/1024).toFixed(1)+' KB';}
+async function renderBackups(){
+ const result=await api('/backups');if(state.view!=='backups')return;
+ state.backups=result.backups;
+ const actions='<div class="head-actions"><button class="primary" data-action="backup-create">＋ 지금 백업</button><button data-action="backup-restore" '+(state.backups.length?'':'disabled')+'>복구</button></div>';
+ document.querySelector('#content').innerHTML=pageHead('BACKUP & RESTORE','백업/복구','포털 자료 전체의 백업을 만들고 이전 시점으로 복구하세요.',actions)+`<section class="panel"><div class="panel-head"><h2>저장된 백업 <small>${state.backups.length}개</small></h2></div>${state.backups.length?`<div class="table-wrap"><table><thead><tr><th>백업 시점</th><th>파일 이름</th><th>크기</th><th>받기</th></tr></thead><tbody>${state.backups.map(row=>`<tr><td>${fmt(row.created_at)}</td><td>${esc(row.name)}</td><td>${backupSize(row.size)}</td><td><a href="/api/backups/${encodeURIComponent(row.name)}/download" download="${esc(row.name)}">다운로드</a></td></tr>`).join('')}</tbody></table></div>`:'<div class="empty"><h3>저장된 백업이 없습니다</h3><p>지금 백업을 눌러 첫 백업을 만드세요.</p></div>'}</section><p class="help-line">백업에는 계정·설치·자료·자산·업무일지와 첨부파일이 포함됩니다. 목록은 이 PC의 backups 폴더에 저장된 파일입니다. 복구하면 선택한 시점 이후의 변경 사항이 되돌아가고, 복구 직전 상태는 별도 백업으로 남습니다.</p>`;
+}
+function backupRestoreDialog(){
+ openDialog('백업 시점 복구',`<form id="backup-restore-form"><label>복구할 백업 *<select name="name" required><option value="">백업을 선택하세요</option>${state.backups.map(row=>`<option value="${esc(row.name)}">${fmt(row.created_at)} · ${esc(row.name)} · ${backupSize(row.size)}</option>`).join('')}</select></label><p class="help-line">선택한 시점 이후 변경 사항은 되돌아갑니다. 복구 직전 상태를 새 백업으로 저장한 뒤 서비스를 다시 연결합니다. 복구 후 다시 로그인해야 할 수 있습니다.</p><div class="form-actions"><button type="button" data-action="close">취소</button><button class="danger">선택한 시점으로 복구</button></div></form>`);
+}
+async function waitForRestore(restoreId,previousInstance){
+ document.querySelector('#content').innerHTML=pageHead('RESTORE IN PROGRESS','복구 진행 중','백업을 적용하고 포털을 다시 연결하고 있습니다.')+'<section class="panel"><div class="empty" role="status"><h3>복구 중입니다</h3><p>이 화면을 닫지 말고 잠시 기다려 주세요. 백업 파일이 클수록 시간이 걸립니다.</p></div></section>';
+ const deadline=Date.now()+15*60*1000;
+ while(Date.now()<deadline){
+  await new Promise(resolve=>setTimeout(resolve,1500));
+  try{
+   const response=await fetch('/api/health',{cache:'no-store'});
+   if(!response.ok)continue;
+   const health=await response.json();
+   if(health.instance_id===previousInstance)continue;
+   if(health.restore_result?.id!==restoreId)throw new Error('포털이 다시 시작됐지만 복구 결과를 확인할 수 없습니다. 운영 기록을 확인해 주세요.');
+   if(!health.restore_result.ok)throw new Error('복구에 실패해 이전 상태로 되돌렸습니다. 운영 기록을 확인해 주세요.');
+   location.reload();return;
+  }catch(error){if(error instanceof TypeError)continue;throw error;}
+ }
+ throw new Error('복구 완료를 확인하지 못했습니다. 포털을 새로고침하고 운영 기록을 확인해 주세요.');
 }
 async function previewDialog(id){
  const {file:f}=await api('/manuals/'+id);const url='/api/manuals/'+f.id+'/preview';
@@ -376,8 +419,8 @@ async function featureAction(action,id,button){
  }
  case 'folder':features.folder=id?Number(id):null;features.libraryPage=1;features.libraryQuery='';await renderLibrary();return true;
  case 'library-prev':case 'library-next':features.libraryPage+=action.endsWith('prev')?-1:1;await renderLibrary();return true;
- case 'new-folder':if(features.folderDepth>=2)throw new Error('중분류 아래에는 분류를 더 만들 수 없습니다.');openDialog(['대분류','중분류'][features.folderDepth]+' 등록',`<form id="folder-form">${input('name','분류명 *','','required maxlength="100"')}<div class="form-actions"><button class="primary">분류 등록</button></div></form>`);return true;
- case 'upload-manual':if(features.folderDepth!==2)throw new Error('중분류를 선택한 뒤 자료를 등록해 주세요.');openDialog('자료 등록','<form id="manual-form"><label>등록할 파일<input name="file" type="file" required></label><p class="help-line">현재 폴더에 등록됩니다. 파일당 최대 500MB입니다.</p><div class="form-actions"><button class="primary">자료 등록</button></div></form>');return true;
+ case 'new-folder':openDialog((['대분류','중분류','소분류'][features.folderDepth]??'하위 폴더')+' 등록',`<form id="folder-form">${input('name','폴더명 *','','required maxlength="100"')}<div class="form-actions"><button class="primary">폴더 등록</button></div></form>`);return true;
+ case 'upload-manual':if(features.folderDepth<2)throw new Error('중분류 또는 하위 폴더를 선택한 뒤 자료를 등록해 주세요.');openDialog('자료 등록','<form id="manual-form"><label>등록할 파일<input name="file" type="file" required></label><p class="help-line">현재 폴더에 등록됩니다. 파일당 최대 500MB입니다.</p><div class="form-actions"><button class="primary">자료 등록</button></div></form>');return true;
  case 'rename-folder':{
   const folder=features.libraryTree.find(folder=>folder.id===Number(id));
   if(!folder)throw new Error('분류를 다시 선택해 주세요.');
@@ -402,8 +445,8 @@ async function featureSubmit(form,values){
  case 'folder-edit-form':await api('/folders/'+form.dataset.id,{method:'PUT',body:{name:values.name}});modal.close();features.libraryQuery='';features.libraryPage=1;await renderLibrary();toast('분류 이름을 변경했습니다.');return true;
  case 'manual-edit-form':await api('/manuals/'+form.dataset.id,{method:'PUT',body:{name:values.name,folder_id:values.folder_id}});features.folder=values.folder_id?Number(values.folder_id):null;features.libraryPage=1;features.libraryQuery='';modal.close();await renderLibrary();toast('자료 정보를 수정했습니다.');return true;
  case 'manual-move-form':await api('/manuals/'+form.dataset.id,{method:'PUT',body:{folder_id:values.folder_id}});features.folder=Number(values.folder_id);features.libraryPage=1;features.libraryQuery='';modal.close();await renderLibrary();toast('자료를 이동했습니다.');return true;
- case 'folder-form':await api('/folders',{method:'POST',body:{...values,parent_id:features.folder}});modal.close();await renderLibrary();toast('분류를 만들었습니다.');return true;
- case 'manual-form':if(features.folderDepth!==2)throw new Error('중분류를 선택해 주세요.');if(form.elements.file.files[0].size>MAX_UPLOAD_SIZE)throw new Error('파일은 500MB 이하로 등록해 주세요.');await api('/manuals?'+new URLSearchParams({folder:features.folder??''}),{method:'POST',body:new FormData(form)});modal.close();await renderLibrary();toast('자료를 등록했습니다.');return true;
+ case 'folder-form':{const parent=features.folder,created=await api('/folders',{method:'POST',body:{...values,parent_id:parent}});if(parent!=null)features.expandedFolders.add(parent);features.folder=created.id;features.libraryPage=1;features.libraryQuery='';modal.close();await renderLibrary();toast('폴더를 만들었습니다.');}return true;
+ case 'manual-form':if(features.folderDepth<2)throw new Error('중분류 또는 하위 폴더를 선택해 주세요.');if(form.elements.file.files[0].size>MAX_UPLOAD_SIZE)throw new Error('파일은 500MB 이하로 등록해 주세요.');await api('/manuals?'+new URLSearchParams({folder:features.folder??''}),{method:'POST',body:new FormData(form)});modal.close();await renderLibrary();toast('자료를 등록했습니다.');return true;
  case 'installation-upload':{const file=form.elements.file.files[0];if(file.size>MAX_UPLOAD_SIZE)throw new Error('파일은 500MB 이하로 첨부해 주세요.');await api('/installations/'+features.installation.id+'/files',{method:'POST',body:new FormData(form)});await installationDialog(features.installation.id);await renderView();toast('첨부자료를 등록했습니다.');}return true;
  case 'library-search':features.libraryQuery=values.q;features.libraryPage=1;await renderLibrary();return true;
  default:return false;

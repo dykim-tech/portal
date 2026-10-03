@@ -10,7 +10,7 @@
     "start": "node --env-file-if-exists=.env server/index.mjs",
     "dev": "node --watch --env-file-if-exists=.env server/index.mjs",
     "test": "node --test test/*.test.mjs",
-    "check": "node --check server/app.mjs && node --check server/db.mjs && node --check server/features.mjs && node --check server/listing.mjs && node --check server/uploads.mjs && node --check server/categories.mjs && node --check server/work.mjs && node --check server/reports.mjs && node --check server/windows-start.mjs && node --check public/app.js && node --check public/extras.js",
+    "check": "node --check server/app.mjs && node --check server/db.mjs && node --check server/features.mjs && node --check server/listing.mjs && node --check server/uploads.mjs && node --check server/categories.mjs && node --check server/work.mjs && node --check server/reports.mjs && node --check server/backups.mjs && node --check server/backup.mjs && node --check server/index.mjs && node --check server/windows-start.mjs && node --check public/app.js && node --check public/extras.js",
     "backup": "node --env-file-if-exists=.env server/backup.mjs"
   },
   "dependencies": {
