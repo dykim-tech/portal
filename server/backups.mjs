@@ -1,11 +1,21 @@
 import { DatabaseSync, backup as sqliteBackup } from 'node:sqlite';
-import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs';
+import { copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { randomBytes } from 'node:crypto';
 
 const fail = (status, message) => Object.assign(new Error(message), { status });
 const backupName = /^portal-[A-Za-z0-9-]+\.sqlite$/;
 const stamp = () => new Date().toISOString().replace(/[:.]/g, '-');
+const coreTables = ['users', 'items', 'installations', 'folders', 'manuals', 'work_logs'];
+const legacyTables = ['users', 'sessions', 'login_attempts', 'items', 'files', 'history', 'notifications', 'installations', 'folders', 'manuals'];
+const preservedTables = ['users', 'items', 'files', 'history', 'installations', 'folders', 'manuals'];
+const legacyColumns = {
+  users: ['id', 'name', 'email', 'password', 'role', 'active', 'created_at'],
+  items: ['id', 'asset_code', 'created_by', 'updated_by'],
+  installations: ['id', 'customer', 'created_by', 'updated_by'],
+  folders: ['id', 'parent_id', 'name'],
+  manuals: ['id', 'folder_id', 'name', 'size', 'bytes', 'uploaded_by']
+};
 
 export function backupPath(backupDir, name) {
   if (typeof name !== 'string' || !backupName.test(name)) throw fail(400, '백업 파일 이름을 확인해 주세요.');
@@ -25,19 +35,50 @@ export function listBackups(backupDir) {
     .sort((left, right) => right.created_at.localeCompare(left.created_at) || right.name.localeCompare(left.name));
 }
 
-export function verifyBackup(path) {
+function inspectBackup(path, allowLegacy = false) {
   let db;
   try {
     db = new DatabaseSync(path, { readOnly: true });
     if (db.prepare('PRAGMA quick_check').get()?.quick_check !== 'ok') throw fail(400, '백업 파일의 무결성 검사에 실패했습니다.');
     if (db.prepare('PRAGMA foreign_key_check').all().length) throw fail(400, '백업 파일의 연결 정보가 올바르지 않습니다.');
     const tables = new Set(db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map(row => row.name));
-    if (!['users', 'items', 'installations', 'folders', 'manuals', 'work_logs'].every(name => tables.has(name))) throw fail(400, '이 백업은 화면 복구가 지원하지 않는 오래된 형식입니다. 운영 문서의 수동 복구 절차를 사용해 주세요.');
+    const current = coreTables.every(name => tables.has(name)) && legacyTables.every(name => tables.has(name)) && tables.has('customers');
+    const legacy = allowLegacy && !tables.has('work_logs') && !tables.has('customers') && legacyTables.every(name => tables.has(name))
+      && Object.entries(legacyColumns).every(([table, columns]) => {
+        const available = new Set(db.prepare(`PRAGMA table_info(${table})`).all().map(row => row.name));
+        return columns.every(column => available.has(column));
+      });
+    if (!current && !legacy) throw fail(400, '지원되지 않는 백업 형식입니다. 핵심 테이블 또는 열을 확인해 주세요.');
     if (!db.prepare('SELECT id FROM users LIMIT 1').get()) throw fail(400, '관리자 계정이 없는 백업은 복구할 수 없습니다.');
+    return { legacy: !current, counts: Object.fromEntries(preservedTables.map(table => [table, db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n])) };
   } catch (error) {
     if (error.status) throw error;
     throw fail(400, '백업 파일을 열 수 없습니다.');
   } finally { db?.close(); }
+}
+
+export function verifyBackup(path) { return inspectBackup(path); }
+
+export function verifyRestoreCandidate(path) { return inspectBackup(path, true); }
+
+// Migrate a disposable copy. The selected backup is never opened for writing.
+export function prepareRestoreSource(sourcePath, dataDir, migrate) {
+  const source = verifyRestoreCandidate(sourcePath);
+  if (!source.legacy) return { path: sourcePath, cleanup() {} };
+  const stagingDir = mkdtempSync(join(dataDir, 'portal-restore-check-'));
+  const stagedPath = join(stagingDir, 'portal.sqlite');
+  try {
+    copyFileSync(sourcePath, stagedPath);
+    migrate(stagingDir);
+    const migrated = verifyBackup(stagedPath);
+    for (const table of preservedTables) {
+      if (migrated.counts[table] !== source.counts[table]) throw fail(400, `이전 백업의 ${table} 데이터가 보존되지 않아 복구를 중단했습니다.`);
+    }
+    return { path: stagedPath, cleanup: () => rmSync(stagingDir, { recursive: true, force: true }) };
+  } catch (error) {
+    rmSync(stagingDir, { recursive: true, force: true });
+    throw error;
+  }
 }
 
 export async function createBackup(db, backupDir, prefix = 'portal') {
@@ -99,7 +140,7 @@ export function registerBackups(app, { db, backupDir, requireRole, maintenance, 
     if (busy || maintenance.restoring) throw fail(409, '백업 또는 복구 작업이 진행 중입니다.');
     if (req.body?.confirm !== req.params.name) throw fail(400, '선택한 백업 파일을 다시 확인해 주세요.');
     const path = backupPath(backupDir, req.params.name);
-    verifyBackup(path);
+    verifyRestoreCandidate(path);
     const restoreId = randomBytes(12).toString('hex');
     maintenance.restoring = true;
     res.once('close', () => { if (!res.writableFinished) maintenance.restoring = false; });

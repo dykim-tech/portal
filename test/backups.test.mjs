@@ -1,11 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { copyFileSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { createPortal } from '../server/app.mjs';
-import { backupPath, createBackup, listBackups, restoreDatabaseFile } from '../server/backups.mjs';
+import { backupPath, createBackup, listBackups, restoreDatabaseFile, verifyRestoreCandidate } from '../server/backups.mjs';
 
 test('admin can create, list and download backups; restore requires explicit selection', async () => {
   const root = mkdtempSync(join(tmpdir(), 'portal-backup-api-'));
@@ -79,6 +79,25 @@ test('selected backup restores its earlier data while the previous database is r
     prior.close();
   } finally {
     try { portal.db.close(); } catch {}
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('incomplete backups are rejected even when the older tables are present', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'portal-backup-invalid-'));
+  const dataDir = join(root, 'data'), backupDir = join(root, 'backups');
+  const portal = createPortal({ dataDir, backupDir });
+  try {
+    portal.db.prepare("INSERT INTO users(name,username,email,password,role,created_at) VALUES('관리자','admin','admin@example.test','unused','admin','2026-01-01')").run();
+    const saved = await createBackup(portal.db, backupDir);
+    const damaged = join(backupDir, 'portal-incomplete.sqlite');
+    copyFileSync(backupPath(backupDir, saved.name), damaged);
+    const db = new DatabaseSync(damaged);
+    db.exec('DROP TABLE work_logs; DROP TABLE customers; DROP TABLE manuals;');
+    db.close();
+    assert.throws(() => verifyRestoreCandidate(damaged), /지원되지 않는 백업 형식/);
+  } finally {
+    portal.db.close();
     rmSync(root, { recursive: true, force: true });
   }
 });

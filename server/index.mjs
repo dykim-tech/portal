@@ -1,5 +1,5 @@
 import { createPortal } from './app.mjs';
-import { createBackup, restoreDatabaseFile } from './backups.mjs';
+import { createBackup, prepareRestoreSource, restoreDatabaseFile } from './backups.mjs';
 import { existsSync, renameSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
@@ -19,14 +19,18 @@ function listen() {
 async function restoreInPlace({ path, restoreId }) {
   if (restoring) return;
   restoring = true;
-  let oldClosed = false, newOpened = false, previous = null;
+  let oldClosed = false, newOpened = false, previous = null, prepared = null;
   try {
     await new Promise((resolveClose, reject) => server.close(error => error ? reject(error) : resolveClose()));
     const safety = await createBackup(portal.db, backupDir, 'portal-pre-restore');
     console.log('Before-restore backup:', safety.name);
+    prepared = prepareRestoreSource(path, dataDir, stagingDir => {
+      const stagedPortal = createPortal({ dataDir: stagingDir, backupDir: join(stagingDir, 'backups') });
+      stagedPortal.db.close();
+    });
     portal.db.close();
     oldClosed = true;
-    previous = restoreDatabaseFile(dataDir, path);
+    previous = restoreDatabaseFile(dataDir, prepared.path);
     portal = createPortal({ dataDir, backupDir, onRestore: restoreInPlace, restoreResult: { id: restoreId, ok: true } });
     newOpened = true;
     await listen();
@@ -50,7 +54,7 @@ async function restoreInPlace({ path, restoreId }) {
       console.error('Portal restore recovery failed:', recoveryError);
       process.exitCode = 1;
     }
-  } finally { restoring = false; }
+  } finally { prepared?.cleanup(); restoring = false; }
 }
 
 portal = createPortal({ dataDir, backupDir, onRestore: restoreInPlace });
