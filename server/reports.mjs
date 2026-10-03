@@ -94,7 +94,7 @@ export function registerReports(app, { db }) {
       header = ['업무일','고객','제목','업무 유형','담당자','상태','업무 내용','최근 수정'];
       sql = `SELECT w.*,c.name customer_name FROM work_logs w JOIN customers c ON c.id=w.customer_id ${p.where} ORDER BY w.work_date DESC,w.id DESC`;
       args = p.args;
-      project = row => [row.work_date,row.customer_name,row.title,({regular:'정기점검',incident:'장애지원',installation:'설치',per_call:'Per Call'})[row.work_type]??'미분류',row.owner,row.status,row.content,row.updated_at];
+      project = row => [row.work_date,row.customer_name,row.title,({regular:'정기점검',incident:'장애지원',installation:'설치',per_call:'Per Call',other:'기타'})[row.work_type]??'미분류',row.owner,row.status,row.content,row.updated_at];
     } else throw fail(404, '리포트 종류를 찾을 수 없습니다.');
     res.set({
       'Content-Type': 'text/csv; charset=utf-8',

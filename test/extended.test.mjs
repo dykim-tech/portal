@@ -104,6 +104,10 @@ test('categories, installation files, customer work logs, and CSV reports', asyn
     const protectedCsv = await request('/reports/work-logs.csv');
     assert.match(protectedCsv.data, /"'=2\+2"/);
     assert.match(protectedCsv.data, /Per Call/);
+    const otherLog = await request('/work-logs/' + log.data.log.id, 'PUT', { customer_id: customer.id, work_date: '2026-10-01', title: '점검', work_type: 'other', owner: '담당자', status: 'done', content: '정상 작동', version: updatedLog.data.log.version });
+    assert.equal(otherLog.status, 200, JSON.stringify(otherLog.data));
+    assert.equal((await request('/work-logs?work_type=other')).data.total, 1);
+    assert.match((await request('/reports/work-logs.csv')).data, /기타/);
     const workCsv = await request('/reports/work-logs.csv?from=2026-10-02');
     assert.equal(workCsv.status, 200);
     assert.doesNotMatch(workCsv.data, /정상 작동/);
@@ -222,5 +226,24 @@ test('existing work logs keep their contents when work types are added', () => {
   try {
     const row = portal.db.prepare('SELECT title,content,work_type FROM work_logs').get();
     assert.deepEqual({ ...row }, { title: '기존 업무', content: '보존할 내용', work_type: null });
+  } finally { portal.db.close(); }
+});
+
+test('four-type work logs migrate to allow 기타 without losing records', () => {
+  const dataDir = mkdtempSync(join(tmpdir(), 'portal-work-type-other-'));
+  const old = openDatabase(dataDir);
+  old.exec(`CREATE TABLE customers (id INTEGER PRIMARY KEY,name TEXT NOT NULL UNIQUE,contact TEXT NOT NULL DEFAULT '',notes TEXT NOT NULL DEFAULT '',active INTEGER NOT NULL DEFAULT 1,created_at TEXT NOT NULL,updated_at TEXT NOT NULL);
+    CREATE TABLE work_logs (id INTEGER PRIMARY KEY,customer_id INTEGER NOT NULL REFERENCES customers(id),work_date TEXT NOT NULL,title TEXT NOT NULL,work_type TEXT CHECK(work_type IN ('regular','incident','installation','per_call')),owner TEXT NOT NULL DEFAULT '',status TEXT NOT NULL,content TEXT NOT NULL DEFAULT '',version INTEGER NOT NULL DEFAULT 1,created_by INTEGER NOT NULL REFERENCES users(id),updated_by INTEGER NOT NULL REFERENCES users(id),created_at TEXT NOT NULL,updated_at TEXT NOT NULL);`);
+  old.prepare("INSERT INTO users(name,email,password,role,created_at) VALUES('관리자','admin@example.test','unused','admin','2026-01-01')").run();
+  old.prepare("INSERT INTO customers(name,created_at,updated_at) VALUES('기존 고객','2026-01-01','2026-01-01')").run();
+  old.prepare("INSERT INTO work_logs(customer_id,work_date,title,work_type,owner,status,content,created_by,updated_by,created_at,updated_at) VALUES(1,'2026-01-02','기존 업무','regular','담당자','done','보존할 내용',1,1,'2026-01-02','2026-01-02')").run();
+  old.close();
+  const portal = createPortal({ dataDir });
+  try {
+    assert.deepEqual({ ...portal.db.prepare('SELECT title,content,work_type FROM work_logs WHERE id=1').get() }, { title: '기존 업무', content: '보존할 내용', work_type: 'regular' });
+    portal.db.prepare("UPDATE work_logs SET work_type='other' WHERE id=1").run();
+    assert.equal(portal.db.prepare('SELECT work_type FROM work_logs WHERE id=1').get().work_type, 'other');
+    assert.equal(portal.db.prepare('PRAGMA quick_check').get().quick_check, 'ok');
+    assert.equal(portal.db.prepare('PRAGMA foreign_key_check').all().length, 0);
   } finally { portal.db.close(); }
 });

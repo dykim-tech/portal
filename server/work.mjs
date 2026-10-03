@@ -1,4 +1,5 @@
 import { listing } from './listing.mjs';
+import { transaction } from './db.mjs';
 const fail = (status, message) => Object.assign(new Error(message), { status });
 const now = () => new Date().toISOString();
 const text = (value, label, max = 200, required = false) => {
@@ -16,26 +17,36 @@ const date = value => {
   return value;
 };
 const statuses = new Set(['planned', 'progress', 'done', 'hold']);
-const workTypes = new Set(['regular', 'incident', 'installation', 'per_call']);
+const workTypes = new Set(['regular', 'incident', 'installation', 'per_call', 'other']);
+const workLogColumns = `
+    id INTEGER PRIMARY KEY, customer_id INTEGER NOT NULL REFERENCES customers(id),
+    work_date TEXT NOT NULL, title TEXT NOT NULL, work_type TEXT CHECK(work_type IN ('regular','incident','installation','per_call','other')), owner TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL CHECK(status IN ('planned','progress','done','hold')),
+    content TEXT NOT NULL DEFAULT '', version INTEGER NOT NULL DEFAULT 1,
+    created_by INTEGER NOT NULL REFERENCES users(id),
+    updated_by INTEGER NOT NULL REFERENCES users(id),
+    created_at TEXT NOT NULL, updated_at TEXT NOT NULL`;
 export function initializeWork(db) {
   db.exec(`CREATE TABLE IF NOT EXISTS customers (
     id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE COLLATE NOCASE,
     contact TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '',
     active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL
   );
-  CREATE TABLE IF NOT EXISTS work_logs (
-    id INTEGER PRIMARY KEY, customer_id INTEGER NOT NULL REFERENCES customers(id),
-    work_date TEXT NOT NULL, title TEXT NOT NULL, work_type TEXT CHECK(work_type IN ('regular','incident','installation','per_call')), owner TEXT NOT NULL DEFAULT '',
-    status TEXT NOT NULL CHECK(status IN ('planned','progress','done','hold')),
-    content TEXT NOT NULL DEFAULT '', version INTEGER NOT NULL DEFAULT 1,
-    created_by INTEGER NOT NULL REFERENCES users(id),
-    updated_by INTEGER NOT NULL REFERENCES users(id),
-    created_at TEXT NOT NULL, updated_at TEXT NOT NULL
-  );
+  CREATE TABLE IF NOT EXISTS work_logs (${workLogColumns});
   CREATE INDEX IF NOT EXISTS work_logs_customer_date ON work_logs(customer_id,work_date DESC);
   CREATE INDEX IF NOT EXISTS work_logs_date ON work_logs(work_date DESC);`);
   if (!db.prepare('PRAGMA table_info(work_logs)').all().some(column => column.name === 'work_type')) {
-    db.exec("ALTER TABLE work_logs ADD COLUMN work_type TEXT CHECK(work_type IN ('regular','incident','installation','per_call'))");
+    db.exec("ALTER TABLE work_logs ADD COLUMN work_type TEXT CHECK(work_type IN ('regular','incident','installation','per_call','other'))");
+  } else if (!db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='work_logs'").get().sql.includes("'other'")) {
+    transaction(db, () => {
+      db.exec(`CREATE TABLE work_logs_updated (${workLogColumns});
+        INSERT INTO work_logs_updated(id,customer_id,work_date,title,work_type,owner,status,content,version,created_by,updated_by,created_at,updated_at)
+        SELECT id,customer_id,work_date,title,work_type,owner,status,content,version,created_by,updated_by,created_at,updated_at FROM work_logs;
+        DROP TABLE work_logs;
+        ALTER TABLE work_logs_updated RENAME TO work_logs;
+        CREATE INDEX work_logs_customer_date ON work_logs(customer_id,work_date DESC);
+        CREATE INDEX work_logs_date ON work_logs(work_date DESC);`);
+    });
   }
   // Make existing installation customers available for work logs without changing installations.
   db.prepare("INSERT OR IGNORE INTO customers(name,created_at,updated_at) SELECT DISTINCT TRIM(customer),MIN(created_at),MAX(updated_at) FROM installations WHERE TRIM(customer)!='' GROUP BY TRIM(customer)").run();

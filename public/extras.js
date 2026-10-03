@@ -5,7 +5,7 @@ export function createExtras(ctx) {
   const report = { from: '', to: '' };
   const levelNames = ['대분류', '중분류', '소분류'];
   const workStatus = { planned: '예정', progress: '진행 중', done: '완료', hold: '보류' };
-  const workTypes = { regular: '정기점검', incident: '장애지원', installation: '설치', per_call: 'Per Call' };
+  const workTypes = { regular: '정기점검', incident: '장애지원', installation: '설치', per_call: 'Per Call', other: '기타' };
 
   async function loadCategories(scope) {
     const result = await api('/categories?scope=' + encodeURIComponent(scope));
