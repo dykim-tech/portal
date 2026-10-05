@@ -196,7 +196,18 @@ powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File '.\scripts\windows
 - 왼쪽(또는 상단) 메뉴의 **도구**에서 draw.io, Claude, ChatGPT, Google Drive 카드를 누르면 새 탭에서 열립니다. 포털 화면은 그대로 남습니다.
 - 주소: draw.io `https://app.diagrams.net/`, Claude `https://claude.ai/`, ChatGPT `https://chatgpt.com/`, Google Drive `https://drive.google.com/`.
 - **Notion** 카드는 웹(https://www.notion.so/)을 새 탭에서 엽니다.
-- **Visual Studio Code**(`vscode://`)와 **DBeaver**(`dbeaver://`) 카드는 이 PC에 설치된 앱을 실행합니다. 처음 누를 때 브라우저가 앱 열기를 물으면 허용합니다.
+- **Visual Studio Code**(`vscode://`)와 **DBeaver**(`dbeaver-launch://`) 카드는 이 PC에 설치된 앱을 실행합니다. 처음 누를 때 브라우저가 앱 열기를 물으면 허용합니다.
+  - DBeaver 기본 주소(`dbeaver://`)는 받은 주소를 파일로 열려고 해 포털에서 실행되지 않으므로, 포털용 주소 `dbeaver-launch://`를 이 PC 사용자 레지스트리(`HKCU\Software\Classes\dbeaver-launch`)에 등록해 DBeaver만 실행합니다(2026-10-05). 다른 PC로 옮기면 아래 명령으로 다시 등록하고, 필요 없으면 `Remove-Item -Recurse 'HKCU:\Software\Classes\dbeaver-launch'`로 지웁니다.
+
+```powershell
+$base='HKCU:\Software\Classes\dbeaver-launch'
+New-Item -Path "$base\shell\open\command" -Force | Out-Null
+Set-ItemProperty -Path $base -Name '(default)' -Value 'URL:DBeaver Launch (DYKIM PORTAL)'
+New-ItemProperty -Path $base -Name 'URL Protocol' -Value '' -PropertyType String -Force | Out-Null
+Set-ItemProperty -Path "$base\shell\open\command" -Name '(default)' -Value '"C:\Program Files\DBeaver\dbeaver.exe"'
+```
+
+  - DBeaver가 늦게 뜨는 경우: 시작할 때 지난번 열어 둔 SQL 편집기의 DB에 연결하려다, 그 서버에 닿지 않으면 연결 시간 초과(약 20초)까지 기다립니다. 접속할 수 없는 서버의 SQL 탭은 닫고 DBeaver를 종료하거나, DBeaver 설정에서 편집기를 열 때 자동 연결하지 않도록 바꿉니다.
 \1 이 PC에 설치된 Obsidian 앱(`C:\Program Files\Obsidian`)을 `obsidian://open` 주소로 실행합니다. 처음 누르면 브라우저가 'Obsidian을 열까요?'라고 묻는데, 허용하면 이후 바로 열립니다. Obsidian이 설치되지 않은 PC에서는 동작하지 않습니다.
 - 각 서비스의 로그인과 파일 저장은 해당 서비스에서 합니다. 포털에 보관하려면 내려받은 파일(예: `.drawio`)을 자료 관리에 등록합니다.
 - 인터넷 연결이 필요합니다.
