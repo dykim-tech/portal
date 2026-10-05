@@ -119,7 +119,7 @@ powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File '.\scripts\windows
 
 - 왼쪽·상단 메뉴의 **Outlook**을 누르면 이 PC에 설치된 Outlook 앱이 열립니다(이미 열려 있으면 그 창을 앞으로 가져옴). 포털 화면은 그대로 유지됩니다.
 - 처음 누를 때 브라우저가 'DYKIM Portal Outlook 열기'를 물으면 **열기**를 누릅니다(항상 허용 선택 가능).
-- 눌러도 반응이 없으면 Outlook 연결 주소가 등록되지 않은 것입니다. PowerShell에서 프로젝트 폴더로 이동해 `powershell -ExecutionPolicy Bypass -File .\scripts\windows-outlook-protocol.ps1`을 실행합니다(관리자 권한 불필요). 새 PC로 옮긴 뒤에도 한 번 실행합니다. 해제는 같은 명령에 `-Remove`를 붙입니다.
+- 눌러도 반응이 없으면 먼저 포털 페이지를 새로고침(**Ctrl+F5**)한 뒤 다시 누릅니다. Chrome은 연결 주소를 등록하기 전에 열어 둔 페이지에서는 눌러도 반응하지 않습니다(이 경우 포털이 2.5초 뒤 새로고침 안내를 표시). 새로고침 뒤에도 안 되면 Outlook 연결 주소가 등록되지 않은 것입니다. PowerShell에서 프로젝트 폴더로 이동해 `powershell -ExecutionPolicy Bypass -File .\scripts\windows-outlook-protocol.ps1`을 실행합니다(관리자 권한 불필요). 새 PC로 옮긴 뒤에도 한 번 실행합니다. 해제는 같은 명령에 `-Remove`를 붙입니다.
 
 ### 4-2. 대시보드
 

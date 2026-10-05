@@ -105,9 +105,17 @@ function shell(){
   applySidebarCollapsed();
 }
 // Outlook 메뉴는 화면을 바꾸지 않고 이 PC에 설치된 Outlook을 연다(scripts/windows-outlook-protocol.ps1이 등록한 portal-outlook: 주소).
+// Chrome은 이 주소를 등록하기 전에 열어 둔 화면에서는 눌러도 아무 반응이 없다(새로고침하면 동작, Windows 실측).
+// Outlook이나 브라우저 확인 창이 뜨면 창의 초점이 옮겨 가므로, 2.5초 안에 초점이 그대로이면 새로고침을 안내한다.
 function launchOutlook(){
+  let opened=false;const left=()=>{opened=true;};
+  window.addEventListener('blur',left,{once:true});
   window.location.href='portal-outlook:open';
   toast('PC의 Outlook을 엽니다. 브라우저가 앱 열기를 물으면 허용하세요.');
+  setTimeout(()=>{
+    window.removeEventListener('blur',left);
+    if(!opened&&document.hasFocus())toast('Outlook이 열리지 않았습니다. 페이지를 새로고침(Ctrl+F5)한 뒤 다시 누르세요. 그래도 안 되면 운영자 매뉴얼의 Outlook 항목을 확인하세요.');
+  },2500);
 }
 // 왼쪽 메뉴 접기/펴기: 상단 왼쪽의 패널 버튼으로 전환하고, 이 브라우저에 상태를 기억한다.
 const sidebarCollapsedKey='portal-sidebar-collapsed';
