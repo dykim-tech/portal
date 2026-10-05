@@ -7,7 +7,7 @@ import { Worker } from 'node:worker_threads';
 const fail = (status, message) => Object.assign(new Error(message), { status });
 const backupName = /^portal-[A-Za-z0-9-]+\.sqlite$/;
 const stamp = () => new Date().toISOString().replace(/[:.]/g, '-');
-const retentionMs = 7 * 24 * 60 * 60 * 1000;
+const retentionMs = 3 * 24 * 60 * 60 * 1000; // 백업 보관 기간: 생성 후 3일(72시간)
 const coreTables = ['users', 'items', 'installations', 'folders', 'manuals', 'work_logs'];
 const legacyTables = ['users', 'sessions', 'login_attempts', 'items', 'files', 'history', 'notifications', 'installations', 'folders', 'manuals'];
 const preservedTables = ['users', 'items', 'files', 'history', 'installations', 'folders', 'manuals'];
