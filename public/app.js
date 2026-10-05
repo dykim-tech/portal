@@ -94,7 +94,7 @@ function authPage(setup){
   else {emailField.closest('label').outerHTML=loginField;root.querySelector('.auth-note').textContent='기존 계정은 이전 이메일의 @ 앞부분을 아이디로 입력하세요. 아이디가 겹치면 관리자에게 확인해 주세요.';}
 }
 function shell(){
-  const menus=[['dashboard','대시보드'],['installations','설치관리'],['projects','프로젝트 관리'],['library','자료 관리'],['items','자산 관리'],['todos','TO-DO List'],['work','업무관리'],['reports','리포트'],['tools','도구'],['settings','설정']];
+  const menus=[['dashboard','대시보드'],['installations','설치관리'],['projects','프로젝트 관리'],['library','자료 관리'],['items','자산 관리'],['todos','TO-DO List'],['work','업무관리'],['reports','리포트'],['tools','도구'],['outlook','Outlook'],['settings','설정']];
   sidebarMenus=menus;
   const defaults=sidebarMenus.map(([view])=>view);
   let saved=[];try{saved=JSON.parse(localStorage.getItem(sidebarMenuKey()));}catch{}
@@ -103,6 +103,11 @@ function shell(){
   root.querySelector('.brand > div').innerHTML="<span class=\"brand-title\">DYKIM'S PORTAL</span><small>PERSONAL WORKSPACE</small>";
   renderSidebarMenu();
   applySidebarCollapsed();
+}
+// Outlook 메뉴는 화면을 바꾸지 않고 이 PC에 설치된 Outlook을 연다(scripts/windows-outlook-protocol.ps1이 등록한 portal-outlook: 주소).
+function launchOutlook(){
+  window.location.href='portal-outlook:open';
+  toast('PC의 Outlook을 엽니다. 브라우저가 앱 열기를 물으면 허용하세요.');
 }
 // 왼쪽 메뉴 접기/펴기: 상단 왼쪽의 패널 버튼으로 전환하고, 이 브라우저에 상태를 기억한다.
 const sidebarCollapsedKey='portal-sidebar-collapsed';
@@ -618,6 +623,7 @@ document.addEventListener('click',async event=>{
   const button=event.target.closest('button');if(!button)return;
   try{
     if(bulkMode?.deleting){toast('선택한 항목을 삭제하는 중입니다. 잠시 기다려 주세요.');return;}
+    if(button.dataset.view==='outlook'){launchOutlook();return;}
     if(button.dataset.view){await navigateTo(button.dataset.view);return;}
     if(button.dataset.tableSort){const kind=button.dataset.tableSort,key=button.dataset.sort,config=tableState[kind];if(!tableColumns[kind]?.includes(key))return;config.direction=config.sort===key?(config.direction==='asc'?'desc':'asc'):['updated_at','created_at','work_date','installed_on','completed_on','due_date'].includes(key)?'desc':'asc';config.sort=key;resetListingPage(kind);await renderView();return;}
     const action=button.dataset.action,id=button.dataset.id;if(!action)return;

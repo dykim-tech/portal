@@ -115,6 +115,12 @@ powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File '.\scripts\windows
 - 열 너비: 표 머리글 사이 경계를 마우스로 끌어 조정합니다. 경계를 두 번 누르면 기본 너비로 돌아갑니다. 너비는 브라우저에 저장됩니다.
 - 우클릭 메뉴: 수정 권한이 있으면 항목을 우클릭해 **수정·삭제**를 엽니다. 삭제는 여러 항목 선택 화면으로 바뀌며, **선택한 N개 삭제**에서 한 번 확인한 뒤 처리합니다.
 
+### 4-1-1. Outlook
+
+- 왼쪽·상단 메뉴의 **Outlook**을 누르면 이 PC에 설치된 Outlook 앱이 열립니다(이미 열려 있으면 그 창을 앞으로 가져옴). 포털 화면은 그대로 유지됩니다.
+- 처음 누를 때 브라우저가 'DYKIM Portal Outlook 열기'를 물으면 **열기**를 누릅니다(항상 허용 선택 가능).
+- 눌러도 반응이 없으면 Outlook 연결 주소가 등록되지 않은 것입니다. PowerShell에서 프로젝트 폴더로 이동해 `powershell -ExecutionPolicy Bypass -File .\scripts\windows-outlook-protocol.ps1`을 실행합니다(관리자 권한 불필요). 새 PC로 옮긴 뒤에도 한 번 실행합니다. 해제는 같은 명령에 `-Remove`를 붙입니다.
+
 ### 4-2. 대시보드
 
 - 건수 카드: 등록 자산·설치 정보·등록 자료·읽지 않은 알림.
@@ -333,7 +339,7 @@ Get-CimInstance Win32_Process -Filter 'ProcessId = 12345' | Select-Object Proces
 2. `npm.cmd run backup`으로 최종 백업을 만들고 크기·시각을 확인합니다.
 3. 새 PC에 Git과 Node.js 24.13 이상 24.x를 설치하고 저장소를 받아 `npm.cmd ci`를 실행합니다.
 4. 포털을 시작하기 전에 최종 백업을 새 `data\portal.sqlite`로 복사하고 무결성을 확인합니다.
-5. `scripts\windows-install.ps1`로 예약 작업을 등록하고, 기존 관리자 계정으로 로그인해 건수와 첨부파일을 확인합니다.
+5. `scripts\windows-install.ps1`로 예약 작업을 등록하고, 기존 관리자 계정으로 로그인해 건수와 첨부파일을 확인합니다. Outlook 메뉴를 쓰려면 `scripts\windows-outlook-protocol.ps1`도 한 번 실행합니다.
 6. 두 PC를 동시에 사용하지 않습니다(데이터가 자동으로 합쳐지지 않음). 자세한 명령은 PC 이전 가이드(`docs\PC_MIGRATION.md`)를 따릅니다.
 
 ## 11. 장애 보고 시 남길 정보
