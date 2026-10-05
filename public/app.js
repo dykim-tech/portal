@@ -15,7 +15,7 @@ const fmt=v=>v?new Intl.DateTimeFormat('ko-KR',{dateStyle:'medium',timeStyle:'sh
 const canEdit=()=>['admin','editor'].includes(state.user?.role);
 const options=(values,selected)=>values.map(v=>`<option value="${v}" ${v===selected?'selected':''}>${labels[v]??v}</option>`).join('');
 let toastTimer, pollTimer;
-let sidebarMenus=[],sidebarMenuOrder=[],viewHistory=[];
+let sidebarMenus=[],sidebarMenuOrder=[];
 const sidebarMenuKey=()=>`portal-sidebar-menu-${state.user.id}`;
 function saveSidebarMenu(){try{localStorage.setItem(sidebarMenuKey(),JSON.stringify(sidebarMenuOrder));}catch{toast('메뉴 순서를 저장하지 못했습니다. 브라우저 저장 공간을 확인해 주세요.');}}
 // 도구 메뉴: 자주 쓰는 외부 서비스를 새 탭에서 연다. 포털은 이 서비스들에 로그인하거나 파일을 저장하지 않는다.
@@ -44,8 +44,39 @@ function renderSettingsMenu(){
   const names=new Map(sidebarMenus);
   container.innerHTML=`<div class="settings-menu-list">${sidebarMenuOrder.map((id,index)=>{const name=esc(names.get(id));return `<div class="settings-menu-row"><span>${name}</span><button type="button" class="small" data-action="menu-up" data-id="${id}" aria-label="${name} 위로 이동" ${index===0?'disabled':''}>↑</button><button type="button" class="small" data-action="menu-down" data-id="${id}" aria-label="${name} 아래로 이동" ${index===sidebarMenuOrder.length-1?'disabled':''}>↓</button></div>`;}).join('')}</div><button type="button" data-action="menu-reset">기본 순서로 되돌리기</button>`;
 }
-async function navigateTo(view){if(view!==state.view){viewHistory.push(state.view);state.view=view;}await renderView();}
-async function navigateBack(){state.view=viewHistory.pop()??'dashboard';await renderView();}
+// 브라우저 뒤로가기 처리: 포털 화면 이동을 브라우저 기록에 남기고, 대시보드 아래에 '보호 기록'을 하나 둔다.
+// 뒤로가기가 보호 기록에 닿으면 다시 대시보드로 돌려 놓아 포털 밖으로 나가지 않는다. 창이 열려 있으면 뒤로가기는 창만 닫는다.
+// (Chrome은 사용자 조작 없이 추가된 기록을 뒤로가기에서 건너뛰므로, 보호 기록은 첫 클릭·키 입력 때 만든다.)
+let historyIndex=0,historyGuarded=false;
+function guardHistory(){
+  if(historyGuarded||!state.user)return;
+  historyGuarded=true;
+  history.replaceState({portal:true,guard:true},'');
+  history.pushState({portal:true,view:'dashboard',index:0},'');
+  historyIndex=0;
+  if(state.view!=='dashboard'){historyIndex=1;history.pushState({portal:true,view:state.view,index:1},'');}
+}
+for(const type of ['pointerdown','keydown'])document.addEventListener(type,guardHistory,{capture:true});
+async function navigateTo(view){
+  if(view!==state.view){guardHistory();state.view=view;historyIndex++;history.pushState({portal:true,view,index:historyIndex},'');}
+  await renderView();
+}
+async function navigateBack(){if(historyGuarded&&historyIndex>0)history.back();else if(state.view!=='dashboard'){state.view='dashboard';historyIndex=0;await renderView();}}
+window.addEventListener('popstate',event=>{
+  if(!state.user)return;
+  const entry=event.state;
+  if(modal.open){modal.close();history.pushState({portal:true,view:state.view,index:historyIndex},'');return;}
+  if(entry?.guard){
+    history.pushState({portal:true,view:'dashboard',index:0},'');historyIndex=0;
+    if(state.view!=='dashboard'){state.view='dashboard';renderView().catch(error=>toast(error.message));}
+    toast('대시보드가 첫 화면입니다.');
+    return;
+  }
+  if(!entry?.portal)return;
+  historyIndex=entry.index??0;
+  if(entry.view&&entry.view!==state.view){state.view=entry.view;renderView().catch(error=>toast(error.message));}
+  else updateNav();
+});
 function toast(message){document.querySelector('#toast').textContent=message;clearTimeout(toastTimer);toastTimer=setTimeout(()=>document.querySelector('#toast').textContent='',4500);}
 async function api(path,options={}){
   const {body,...rest}=options;
@@ -75,9 +106,9 @@ function shell(){
 // 사용자 관리·백업/복구는 설정 안의 관리자 메뉴이므로 해당 화면에서는 메뉴의 '설정'을 강조한다.
 const settingsChildViews=['users','backups'];
 function navView(){return settingsChildViews.includes(state.view)?'settings':state.view;}
-function updateNav(){document.querySelectorAll('[data-view]').forEach(b=>{const menu=b.closest('nav')||b.classList.contains('sidebar-link');const current=menu?b.dataset.view===navView():b.dataset.view===state.view;b.classList.toggle('active',current);if(menu)b.setAttribute('aria-current',current?'page':'false');});const count=document.querySelector('#nav-count');if(count){count.textContent=state.unread;count.hidden=!state.unread;}const bread=document.querySelector('#breadcrumb');if(bread)bread.textContent={dashboard:'대시보드',installations:'설치관리',projects:'프로젝트 관리',library:'자료 관리',items:'자산 관리',todos:'TO-DO List',work:'업무관리',reports:'리포트',notifications:'알림',users:'설정 / 사용자 관리',backups:'설정 / 백업/복구',operations:'운영관리',usage:'사용량 관리',tools:'도구',settings:'설정'}[state.view];const back=document.querySelector('[data-action="view-back"]');if(back)back.disabled=viewHistory.length===0&&state.view==='dashboard';}
+function updateNav(){document.querySelectorAll('[data-view]').forEach(b=>{const menu=b.closest('nav')||b.classList.contains('sidebar-link');const current=menu?b.dataset.view===navView():b.dataset.view===state.view;b.classList.toggle('active',current);if(menu)b.setAttribute('aria-current',current?'page':'false');});const count=document.querySelector('#nav-count');if(count){count.textContent=state.unread;count.hidden=!state.unread;}const bread=document.querySelector('#breadcrumb');if(bread)bread.textContent={dashboard:'대시보드',installations:'설치관리',projects:'프로젝트 관리',library:'자료 관리',items:'자산 관리',todos:'TO-DO List',work:'업무관리',reports:'리포트',notifications:'알림',users:'설정 / 사용자 관리',backups:'설정 / 백업/복구',operations:'운영관리',usage:'사용량 관리',tools:'도구',settings:'설정'}[state.view];const back=document.querySelector('[data-action="view-back"]');if(back)back.disabled=historyIndex===0&&state.view==='dashboard';}
 async function refreshCount(){const result=await api('/notifications');state.unread=result.unread;updateNav();return result;}
-async function signedIn(user){state.user=user;state.view='dashboard';viewHistory=[];shell();await renderView();await refreshCount();clearInterval(pollTimer);pollTimer=setInterval(()=>{if(state.user)refreshCount().catch(()=>{});},60000);}
+async function signedIn(user){state.user=user;state.view='dashboard';historyIndex=0;historyGuarded=false;shell();await renderView();await refreshCount();clearInterval(pollTimer);pollTimer=setInterval(()=>{if(state.user)refreshCount().catch(()=>{});},60000);}
 async function renderView(){if(bulkMode&&bulkMode.view!==state.view)bulkMode=null;updateNav();if(state.view==='items')await renderItems();else if(state.view==='users')await showUsers();else if(state.view==='backups')await renderBackups();else if(state.view==='operations')await management.renderOperations();else if(state.view==='usage')await management.renderUsage();else if(state.view==='tools')renderTools();else if(state.view==='projects')await management.renderProjects();else if(state.view==='notifications')await renderNotifications();else if(state.view==='dashboard')await renderDashboard();else if(state.view==='installations')await renderInstallations();else if(state.view==='library')await renderLibrary();else if(state.view==='todos')await extras.renderTodos();else if(state.view==='work')await extras.renderWork();else if(state.view==='reports')await extras.renderReports();else renderSettings();}
 async function renderItems(){
   await extras.loadCategories('items');
