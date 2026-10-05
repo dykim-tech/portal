@@ -6,7 +6,7 @@ import { join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
 import { createPortal } from '../server/app.mjs';
-import { latestBackupTime, createBackup, cleanBackupFiles, recoverInterruptedRestore } from '../server/backups.mjs';
+import { latestBackupTime, createBackup, cleanBackupFiles, recoverInterruptedRestore, pruneExpiredBackups } from '../server/backups.mjs';
 import { DatabaseSync } from 'node:sqlite';
 
 const freePort = () => new Promise((ok, fail) => { const s = createServer(); s.once('error', fail); s.listen(0, '127.0.0.1', () => { const { port } = s.address(); s.close(() => ok(port)); }); });
@@ -152,4 +152,33 @@ test('supervisor keeps retrying after repeated start failures instead of giving 
     if (blocker.listening) blocker.close();
     supervisor.kill('SIGKILL');
   }
+});
+
+test('large deletions run in the background and a backup completes while writes continue', async () => {
+  const dataDir = mkdtempSync(join(tmpdir(), 'portal-background-')), backupDir = join(dataDir, 'backups');
+  const portal = createPortal({ dataDir, backupDir, origin: 'http://localhost:3100' });
+  try {
+    portal.db.prepare("INSERT INTO users(name,username,email,password,role,created_at) VALUES('관리자','admin','a@example.test','x','admin',datetime())").run();
+    portal.db.exec('CREATE TABLE IF NOT EXISTS load_probe(x)');
+    // 백업하는 동안 운영 연결로 계속 기록한다.
+    let writing = true, writes = 0;
+    const writer = (async () => { while (writing) { portal.db.prepare('INSERT INTO load_probe VALUES(randomblob(4096))').run(); writes++; await new Promise(r => setImmediate(r)); } })();
+    const saved = await createBackup(portal.db, backupDir);
+    writing = false; await writer;
+    assert.ok(writes > 0, 'writes continued during the backup');
+    const copy = new DatabaseSync(join(backupDir, saved.name), { readOnly: true });
+    assert.equal(copy.prepare('PRAGMA quick_check').get().quick_check, 'ok');
+    copy.close();
+    // 오래된 백업 삭제: 목록에서는 즉시 빠지고 실제 파일은 백그라운드에서 지워진다.
+    const old = 'portal-2020-01-01T00-00-00-000Z.sqlite';
+    writeFileSync(join(backupDir, old), Buffer.alloc(1024 * 1024));
+    assert.deepEqual(pruneExpiredBackups(backupDir), [old]);
+    assert.ok(!existsSync(join(backupDir, old)));
+    await until(() => readdirSync(backupDir).every(name => !name.includes('.deleting-')), 5000);
+    assert.deepEqual(readdirSync(backupDir), [saved.name]);
+    // 서버가 꺼져 남은 삭제 대기 파일은 시작할 때 정리한다.
+    writeFileSync(join(backupDir, 'portal-2020-01-02T00-00-00-000Z.sqlite.deleting-abcd1234'), 'x');
+    cleanBackupFiles(backupDir);
+    await until(() => readdirSync(backupDir).length === 1, 5000);
+  } finally { portal.db.close(); }
 });

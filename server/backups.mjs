@@ -1,5 +1,6 @@
 import { DatabaseSync, backup as sqliteBackup } from 'node:sqlite';
 import { closeSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readSync, readdirSync, renameSync, rmSync, statSync, utimesSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { Worker } from 'node:worker_threads';
@@ -24,6 +25,14 @@ const legacyColumns = {
 
 const SIDECARS = ['-wal', '-shm', '-journal'];
 const removeSidecars = path => { for (const suffix of SIDECARS) rmSync(path + suffix, { force: true }); };
+// 수 GB 백업 파일을 바로 지우면(rmSync) 그동안 서버 전체가 1초 가까이 멈춘다. 이름을 바꿔 목록에서 즉시 빼고
+// 실제 삭제는 백그라운드에서 한다. 서버가 그 사이 꺼져 남은 파일은 다음 시작 때 cleanBackupFiles가 지운다.
+const deletingName = /^portal-[A-Za-z0-9-]+\.sqlite\.deleting-[a-f0-9]+$/;
+function removeInBackground(path) {
+  const doomed = `${path}.deleting-${randomBytes(4).toString('hex')}`;
+  renameSync(path, doomed);
+  rm(doomed, { force: true }).catch(error => console.warn(`Backup file removal failed: ${doomed}`, error));
+}
 
 // 백업 파일을 단일 파일(DELETE 저널 방식)로 바꾼다. 이렇게 하면 백업을 읽기 전용으로 열거나 검사해도
 // 옆에 -wal/-shm 보조 파일이 생기지 않고, 파일 하나만 복사해도 완전한 백업이 된다.
@@ -44,6 +53,7 @@ export function cleanBackupFiles(backupDir) {
   const names = new Set(readdirSync(backupDir));
   const mains = new Set();
   for (const name of names) {
+    if (deletingName.test(name)) { rm(join(backupDir, name), { force: true }).catch(error => console.warn(`Backup file removal failed: ${name}`, error)); removed++; continue; }
     const match = /^(portal-[A-Za-z0-9-]+\.sqlite(?:\.partial)?)(-wal|-shm|-journal)$/.exec(name);
     if (!match) continue;
     const main = match[1];
@@ -107,7 +117,7 @@ export function pruneExpiredBackups(backupDir, now = Date.now(), protectedNames 
     if (protectedNames.has(entry.name) || index === 0) return;
     if (day >= oldestDay && count <= BACKUP_KEEP_PER_DAY) return;
     try {
-      rmSync(entry.path);
+      removeInBackground(entry.path);
       removed.push(entry.name);
       removeSidecars(entry.path); removeSidecars(entry.path + '.partial');
     } catch (error) { console.warn(`Expired backup cleanup failed: ${entry.name}`, error); }
@@ -197,7 +207,10 @@ export async function createBackup(db, backupDir, prefix = 'portal') {
   const name = `${prefix}-${stamp()}-${randomBytes(3).toString('hex')}.sqlite`;
   const path = join(backupDir, name), partial = path + '.partial';
   try {
-    await sqliteBackup(db, partial);
+    // 백업은 별도의 읽기 전용 연결에서 한 번에(rate 최대값) 복사한다. 운영 연결로 조금씩 복사하면 복사 단계마다
+    // 그 연결이 잠겨 다른 요청이 최대 1초 가까이 기다렸다. 별도 연결은 WAL 덕분에 쓰기와 동시에 진행된다.
+    const source = new DatabaseSync(db.prepare('PRAGMA database_list').get().file, { readOnly: true });
+    try { await sqliteBackup(source, partial, { rate: 2147483647 }); } finally { source.close(); }
     makeStandalone(partial);
     await verifyBackupInWorker(partial);
     removeSidecars(partial);

@@ -49,6 +49,9 @@ test('nested library folders, editing and restarts preserve documents', async t 
       }
       assert.equal((await request('/manuals?folder=999999', 'POST', upload())).status, 404);
       assert.deepEqual(readdirSync(join(dataDir, 'upload-tmp')), []);
+      // 다 쓴 임시 파일은 upload-trash로 옮겨 백그라운드에서 지운다.
+      for (let i = 0; i < 50 && readdirSync(join(dataDir, 'upload-trash')).length; i++) await new Promise(r => setTimeout(r, 50));
+      assert.deepEqual(readdirSync(join(dataDir, 'upload-trash')), []);
       const result = await request('/manuals?folder=' + middle, 'POST', upload());
       assert.equal(result.status, 201);
       fileId = result.data.id;

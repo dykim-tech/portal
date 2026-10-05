@@ -1,6 +1,8 @@
 import multer from 'multer';
-import { closeSync, existsSync, mkdirSync, openSync, readSync, readdirSync, unlinkSync } from 'node:fs';
-import { join } from 'node:path';
+import { closeSync, existsSync, mkdirSync, openSync, readSync, readdirSync, renameSync, unlinkSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
+import { randomBytes } from 'node:crypto';
+import { basename, dirname, join } from 'node:path';
 import { Readable } from 'node:stream';
 import { transaction } from './db.mjs';
 
@@ -33,6 +35,9 @@ export function createUploadMiddleware(dataDir) {
       catch (error) { console.warn('Could not remove an old upload temporary file:', error); }
     }
   }
+  // 다 쓴 업로드 임시 파일은 upload-trash로 옮긴 뒤 백그라운드에서 지운다. 지난 실행에서 남은 것은 여기서 정리한다.
+  const trashDir = join(dataDir, 'upload-trash');
+  rm(trashDir, { recursive: true, force: true }).catch(error => console.warn('Could not clear old discarded uploads:', error)).finally(() => mkdirSync(trashDir, { recursive: true, mode: 0o700 }));
   return multer({ dest: tempDir, limits: { files: 1, fields: 0 } }).single('file');
 }
 
@@ -63,10 +68,18 @@ export function writeUploadChunks(db, scope, fileId, file) {
   if (written !== file.size) throw new Error('Uploaded file size changed while saving.');
 }
 
+// 수 GB 임시 파일을 바로 지우면 그동안 서버가 멈추므로, 같은 드라이브의 upload-trash로 옮긴 뒤(즉시 끝남) 백그라운드에서 지운다.
 export function discardUpload(file) {
   if (!file?.path || !existsSync(file.path)) return;
-  try { unlinkSync(file.path); }
-  catch (error) { console.warn('Could not remove an upload temporary file:', error); }
+  try {
+    const trashDir = join(dirname(dirname(file.path)), 'upload-trash');
+    mkdirSync(trashDir, { recursive: true, mode: 0o700 });
+    const doomed = join(trashDir, `${basename(file.path)}-${randomBytes(4).toString('hex')}`);
+    renameSync(file.path, doomed);
+    rm(doomed, { force: true }).catch(error => console.warn('Could not remove a discarded upload:', error));
+  } catch (error) {
+    try { unlinkSync(file.path); } catch { console.warn('Could not remove an upload temporary file:', error); }
+  }
 }
 
 // 큰 첨부를 한 번에 지우면 SQLite가 수 GB를 읽고 쓰는 동안 서버 전체가 멈추므로,
@@ -178,18 +191,23 @@ export function sendStoredFile(db, scope, file, res) {
   let seq = 0, sent = 0;
   const source = new Readable({
     highWaterMark: 4 * 1024 * 1024,
+    // 다음 조각은 이벤트 루프를 한 번 양보한 뒤 읽는다. 받는 쪽이 빠르면(같은 PC) 스트림이 쉬지 않고
+    // read()를 연달아 불러 600MB 파일에 2초 넘게 서버 전체가 멈췄기 때문이다.
     read() {
-      try {
-        if (!db.isOpen) throw new Error('Database closed during download.');
-        const row = chunk.get(scope, file.id, seq++);
-        if (!row) {
-          if (sent !== file.size) throw new Error(`Stored file is incomplete (${sent}/${file.size} bytes).`);
-          this.push(null);
-          return;
-        }
-        sent += row.bytes.length;
-        this.push(row.bytes);
-      } catch (error) { this.destroy(error); }
+      setImmediate(() => {
+        if (this.destroyed) return;
+        try {
+          if (!db.isOpen) throw new Error('Database closed during download.');
+          const row = chunk.get(scope, file.id, seq++);
+          if (!row) {
+            if (sent !== file.size) throw new Error(`Stored file is incomplete (${sent}/${file.size} bytes).`);
+            this.push(null);
+            return;
+          }
+          sent += row.bytes.length;
+          this.push(row.bytes);
+        } catch (error) { this.destroy(error); }
+      });
     }
   });
   source.on('error', error => { console.error(error.message); res.destroy(error); });

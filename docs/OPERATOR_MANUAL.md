@@ -317,7 +317,7 @@ Get-CimInstance Win32_Process -Filter 'ProcessId = 12345' | Select-Object Proces
 ### E. 파일 등록 실패
 
 - 편집 권한과 디스크 여유 공간(사용량 관리 화면)을 확인합니다.
-- 큰 파일은 `data\upload-tmp\` 임시 파일과 SQLite/WAL에 추가 공간이 필요합니다.
+- 큰 파일은 `data\upload-tmp\` 임시 파일과 SQLite/WAL에 추가 공간이 필요합니다. 저장이 끝난 임시 파일은 `data\upload-trash\`로 옮겨 백그라운드에서 지웁니다(남은 것은 다음 시작 때 정리).
 - 계속 실패하면 화면의 오류 문구와 `data\server.log`를 함께 확인합니다.
 
 ## 9. 저장 공간 관리
