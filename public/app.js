@@ -37,6 +37,9 @@ function renderSidebarMenu(){
   const nav=document.querySelector('#sidebar-nav');if(!nav)return;
   const names=new Map(sidebarMenus);
   nav.innerHTML=sidebarMenuOrder.map(id=>`<button type="button" data-view="${id}">${esc(names.get(id))}</button>`).join('');
+  // 상단 가로 메뉴도 설정에서 정한 순서를 똑같이 따른다.
+  const top=document.querySelector('.horizontal-nav');
+  if(top)top.innerHTML=sidebarMenuOrder.map(id=>`<button data-view="${id}">${esc(names.get(id))}</button>`).join('');
   updateNav();
 }
 function renderSettingsMenu(){
@@ -99,7 +102,7 @@ function shell(){
   const defaults=sidebarMenus.map(([view])=>view);
   let saved=[];try{saved=JSON.parse(localStorage.getItem(sidebarMenuKey()));}catch{}
   sidebarMenuOrder=orderedMenuIds(defaults,saved);
-  root.innerHTML=`<div class="layout"><aside class="sidebar" id="portal-sidebar"><div class="brand"><img src="/favicon.svg" alt=""><div>PORTAL<small>PERSONAL WORKSPACE</small></div><button type="button" class="sidebar-toggle sidebar-toggle-side" data-action="sidebar-toggle" aria-controls="portal-sidebar"><svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true" focusable="false"><rect x="2.5" y="3.5" width="15" height="13" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><line x1="8" y1="3.5" x2="8" y2="16.5" stroke="currentColor" stroke-width="1.6"/></svg></button></div><nav class="nav" id="sidebar-nav" aria-label="주 메뉴"></nav><div class="sidebar-foot"><div class="account"><strong>${esc(state.user.name)}</strong><small>${labels[state.user.role]}</small><div class="account-actions"><button data-action="password">비밀번호 변경</button><button data-action="logout">로그아웃</button></div></div></div></aside><div class="workspace"><header class="topbar"><div class="topbar-location"><button type="button" class="sidebar-toggle sidebar-toggle-top" data-action="sidebar-toggle" aria-controls="portal-sidebar"><svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true" focusable="false"><rect x="2.5" y="3.5" width="15" height="13" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><line x1="8" y1="3.5" x2="8" y2="16.5" stroke="currentColor" stroke-width="1.6"/></svg></button><button type="button" class="back-button" data-action="view-back" aria-label="이전 화면으로 돌아가기" title="이전 화면으로 돌아가기">← 뒤로가기</button><span>내 작업 공간 / <strong id="breadcrumb"></strong></span></div><div class="topbar-tools"><button class="small" data-view="notifications">알림 <span id="nav-count" class="badge" hidden></span></button><span>${esc(state.user.name)} · ${labels[state.user.role]}</span><button class="small mobile-account" data-action="account">계정</button></div></header><nav class="horizontal-nav" aria-label="가로 메뉴">${menus.map(([view,name])=>`<button data-view="${view}">${name}</button>`).join('')}</nav><main class="content" id="content"></main></div></div>`;
+  root.innerHTML=`<div class="layout"><aside class="sidebar" id="portal-sidebar"><div class="brand"><img src="/favicon.svg" alt=""><div>PORTAL<small>PERSONAL WORKSPACE</small></div><button type="button" class="sidebar-toggle sidebar-toggle-side" data-action="sidebar-toggle" aria-controls="portal-sidebar"><svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true" focusable="false"><rect x="2.5" y="3.5" width="15" height="13" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><line x1="8" y1="3.5" x2="8" y2="16.5" stroke="currentColor" stroke-width="1.6"/></svg></button></div><nav class="nav" id="sidebar-nav" aria-label="주 메뉴"></nav><div class="sidebar-foot"><div class="account"><strong>${esc(state.user.name)}</strong><small>${labels[state.user.role]}</small><div class="account-actions"><button data-action="password">비밀번호 변경</button><button data-action="logout">로그아웃</button></div></div></div></aside><div class="workspace"><header class="topbar"><div class="topbar-location"><button type="button" class="sidebar-toggle sidebar-toggle-top" data-action="sidebar-toggle" aria-controls="portal-sidebar"><svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true" focusable="false"><rect x="2.5" y="3.5" width="15" height="13" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><line x1="8" y1="3.5" x2="8" y2="16.5" stroke="currentColor" stroke-width="1.6"/></svg></button><button type="button" class="back-button" data-action="view-back" aria-label="이전 화면으로 돌아가기" title="이전 화면으로 돌아가기">← 뒤로가기</button><span>내 작업 공간 / <strong id="breadcrumb"></strong></span></div><div class="topbar-tools"><button class="small" data-view="notifications">알림 <span id="nav-count" class="badge" hidden></span></button><span>${esc(state.user.name)} · ${labels[state.user.role]}</span><button class="small mobile-account" data-action="account">계정</button></div></header><nav class="horizontal-nav" aria-label="가로 메뉴"></nav><main class="content" id="content"></main></div></div>`;
   root.querySelector('.brand > div').innerHTML="<span class=\"brand-title\">DYKIM'S PORTAL</span><small>PERSONAL WORKSPACE</small>";
   renderSidebarMenu();
   applySidebarCollapsed();
@@ -289,8 +292,8 @@ function recordAt(target){
   }else if(state.view==='installations'){
     button=target.closest('tbody tr')?.querySelector('[data-action="installation"]');kind='installation';
   }else if(state.view==='library'){
-    button=target.closest('.folder-tree-row')?.querySelector('[data-action="folder"]')??target.closest('.file-table tbody tr')?.querySelector('[data-action="folder"], [data-action="preview"]');
-    kind=button?.dataset.action==='folder'?'folder':'manual';
+    button=target.closest('.folder-tree-row')?.querySelector('[data-action="folder"]')??target.closest('.file-table tbody tr')?.querySelector('[data-action="folder"], [data-action="preview"], [data-link-id]');
+    kind=button?.dataset.action==='folder'?'folder':button?.dataset.linkId?'link':'manual';
   }else if(state.view==='users'){
     button=target.closest('tbody tr')?.querySelector('[data-action="user"]');kind='user';
   }else if(state.view==='dashboard'||state.view==='notifications'){
@@ -301,9 +304,9 @@ function recordAt(target){
   return id&&/^\d+$/.test(id)?{kind,id}:null;
 }
 const recordActions={customer:['customer-edit','customer-delete'],work:['work-log','work-delete'],category:['category-rename','category-delete'],item:['item','delete-item'],installation:['installation','installation-delete'],folder:['new-folder','rename-folder','move-folder','delete-folder'],manual:['edit-manual','move-manual','delete-manual'],user:['user','delete-user']};
-const bulkViews={customer:'work',work:'work',category:'items',item:'items',installation:'installations',folder:'library',manual:'library',user:'users'};
-const bulkLabels={customer:'고객',work:'업무일지',category:'자산 분류',item:'자산',installation:'설치정보',folder:'자료 폴더',manual:'자료 파일',user:'사용자'};
-const bulkSelectors={customer:'.classified-sidebar [data-action="work-customer"][data-id]',work:'tbody [data-action="work-log"][data-id]',category:'.classified-sidebar [data-action="category-select"][data-id]',item:'tbody [data-action="item"][data-id]',installation:'tbody [data-action="installation"][data-id]',folder:'.folder-tree-row [data-action="folder"][data-id], .file-table tbody [data-action="folder"][data-id]',manual:'.file-table tbody [data-action="preview"][data-id]',user:'tbody [data-action="user"][data-id]'};
+const bulkViews={customer:'work',work:'work',category:'items',item:'items',installation:'installations',folder:'library',manual:'library',link:'library',user:'users'};
+const bulkLabels={customer:'고객',work:'업무일지',category:'자산 분류',item:'자산',installation:'설치정보',folder:'자료 폴더',manual:'자료 파일',link:'자료 링크',user:'사용자'};
+const bulkSelectors={customer:'.classified-sidebar [data-action="work-customer"][data-id]',work:'tbody [data-action="work-log"][data-id]',category:'.classified-sidebar [data-action="category-select"][data-id]',item:'tbody [data-action="item"][data-id]',installation:'tbody [data-action="installation"][data-id]',folder:'.folder-tree-row [data-action="folder"][data-id], .file-table tbody [data-action="folder"][data-id]',manual:'.file-table tbody [data-action="preview"][data-id]',link:'.file-table tbody [data-link-id][data-id]',user:'tbody [data-action="user"][data-id]'};
 let bulkMode=null;
 function bulkCheck(id){
   const label=document.createElement('label');label.className='bulk-check';
@@ -349,7 +352,7 @@ async function startBulk(kind,id){
   document.querySelector('#content .bulk-toolbar')?.scrollIntoView({block:'nearest'});
 }
 function bulkPath(kind,id){
-  const routes={customer:`/customers/${id}`,work:`/work-logs/${id}`,category:`/categories/${id}?scope=items`,item:`/items/${id}`,installation:`/installations/${id}`,folder:`/folders/${id}`,manual:`/manuals/${id}`,user:`/users/${id}`};
+  const routes={customer:`/customers/${id}`,work:`/work-logs/${id}`,category:`/categories/${id}?scope=items`,item:`/items/${id}`,installation:`/installations/${id}`,folder:`/folders/${id}`,manual:`/manuals/${id}`,link:`/library-links/${id}`,user:`/users/${id}`};
   return routes[kind];
 }
 function bulkDepth(kind,id){
@@ -391,7 +394,11 @@ function libraryContextMenu(target){
   const item=(action,label,attrs='',cls='')=>`<button type="button" role="menuitem" class="${cls}" data-action="${action}" ${attrs}>${label}</button>`;
   const sep='<hr class="menu-separator">';
   const driveItem=item('drive-settings',driveState.name?`Drive 폴더 변경 (${esc(driveState.name)})`:'Drive 폴더 지정');
-  if(record?.kind==='manual'){
+  if(record?.kind==='link'){
+    const id=record.id;
+    items.push(item('open-link','새 탭에서 열기',`data-id="${id}"`),item('copy-link','주소 복사',`data-id="${id}"`));
+    if(edit)items.push(sep,item('edit-link','수정',`data-id="${id}"`),item('move-link','이동',`data-id="${id}"`),sep,item('bulk-start','삭제',`data-kind="link" data-id="${id}"`,'danger'));
+  }else if(record?.kind==='manual'){
     const id=record.id;
     items.push(item('preview','미리보기',`data-id="${id}"`),item('download-manual','다운로드',`data-id="${id}"`),item('drive-file','Google Drive로 복사',`data-id="${id}"`));
     if(edit)items.push(sep,item('edit-manual','수정',`data-id="${id}"`),item('move-manual','이동',`data-id="${id}"`),sep,item('bulk-start','삭제',`data-kind="manual" data-id="${id}"`,'danger'));
@@ -399,14 +406,14 @@ function libraryContextMenu(target){
   }else if(record?.kind==='folder'){
     const id=record.id;
     items.push(item('folder','열기',`data-id="${id}"`));
-    if(edit)items.push(item('new-folder','하위 폴더 생성',`data-parent-id="${id}"`),item('upload-folder','이 폴더에 폴더 업로드',`data-target-id="${id}"`),item('upload-manual','이 폴더에 자료 등록',`data-target-id="${id}"`));
+    if(edit)items.push(item('new-folder','하위 폴더 생성',`data-parent-id="${id}"`),item('upload-folder','이 폴더에 폴더 업로드',`data-target-id="${id}"`),item('upload-manual','이 폴더에 자료 등록',`data-target-id="${id}"`),item('new-link','이 폴더에 링크 추가',`data-target-id="${id}"`));
     items.push(item('drive-folder','Google Drive로 복사',`data-id="${id}"`));
     if(edit)items.push(sep,item('rename-folder','폴더 이름 변경',`data-id="${id}"`),item('move-folder','폴더 이동',`data-id="${id}"`),sep,item('bulk-start','삭제',`data-kind="folder" data-id="${id}"`,'danger'));
     items.push(sep,driveItem);
   }else{
     if(!(target instanceof Element)||!target.closest('#content .explorer')||target.closest('input,textarea,select,a,form'))return '';
     const current=target.closest('[data-action="folder"]:not([data-id])')?null:features.folder??null;
-    if(edit)items.push(item('new-folder','폴더 생성',`data-parent-id="${current??''}"`),item('upload-folder','폴더 업로드',`data-target-id="${current??''}"`),item('upload-manual','자료 등록',`data-target-id="${current??''}"`));
+    if(edit)items.push(item('new-folder','폴더 생성',`data-parent-id="${current??''}"`),item('upload-folder','폴더 업로드',`data-target-id="${current??''}"`),item('upload-manual','자료 등록',`data-target-id="${current??''}"`),item('new-link','링크 추가',`data-target-id="${current??''}"`));
     if(current!=null){
       items.push(item('drive-folder','현재 폴더를 Google Drive로 복사',`data-id="${current}"`));
       if(edit)items.push(sep,item('rename-folder','폴더 이름 변경',`data-id="${current}"`),item('move-folder','폴더 이동',`data-id="${current}"`));
@@ -465,6 +472,28 @@ function libraryDropInfo(target){
   const area=target.closest('.explorer-main')??target.closest('.folder-tree');
   return area?{el:area,folder:features.folder??null}:null;
 }
+function linkHost(url){try{return new URL(url).host;}catch{return url;}}
+// 브라우저 주소창이나 다른 웹 페이지의 링크를 자료 관리로 끌어 놓으면 링크로 추가한다(포털 안에서 끈 링크는 제외).
+let portalDragging=false;
+document.addEventListener('dragstart',()=>{portalDragging=true;});
+document.addEventListener('dragend',()=>{portalDragging=false;});
+function linkDropInfo(event){
+  const types=event.dataTransfer?.types;
+  if(portalDragging||state.view!=='library'||!canEdit()||modal.open||!types||types.includes('Files')||!types.includes('text/uri-list'))return null;
+  return libraryDropInfo(event.target);
+}
+document.addEventListener('dragover',event=>{const info=linkDropInfo(event);if(!info)return;setDropTarget(info.el);event.preventDefault();event.dataTransfer.dropEffect='link';});
+document.addEventListener('drop',async event=>{
+  const info=linkDropInfo(event);if(!info)return;
+  event.preventDefault();setDropTarget(null);
+  const urls=event.dataTransfer.getData('text/uri-list').split(/\r?\n/).map(line=>line.trim()).filter(line=>line&&!line.startsWith('#'));
+  let title='';
+  if(urls.length===1){const html=event.dataTransfer.getData('text/html');if(html)title=new DOMParser().parseFromString(html,'text/html').querySelector('a')?.textContent.trim().slice(0,200)??'';}
+  let added=0;const failed=[];
+  for(const url of urls.slice(0,50)){try{await api('/library-links',{method:'POST',body:{url,name:title,folder_id:info.folder}});added++;}catch(error){failed.push(error.message);}}
+  if(added)await renderLibrary();
+  toast(added?`'${libraryFolderName(info.folder)}'에 링크 ${added}개를 추가했습니다.${failed.length?` ${failed.length}개 실패: ${failed[0]}`:''}`:(failed[0]??'추가할 링크가 없습니다.'));
+});
 function libraryFolderName(folder){return folder===null?'전체 자료':(features.libraryTree??[]).find(row=>row.id===folder)?.name??'선택한 폴더';}
 // 자료 등록: 파일과 폴더를 함께 처리한다. items는 [{path:'상위/하위', file}] 형태이며 path가 ''이면 대상 폴더에 바로 등록한다.
 // 폴더째 올리면 하위 폴더 구조를 그대로 만들고, 같은 이름의 폴더가 이미 있으면 그 폴더에 합쳐 넣는다.
@@ -788,12 +817,12 @@ function folderTree(tree,parent=null,depth=0){
 }
 async function renderLibrary(){
  const d=await api('/library?'+new URLSearchParams({folder:features.folder??'',q:features.libraryQuery,...listingQuery('library',features.libraryPage)}));if(state.view!=='library')return;
- features.libraryTree=d.tree;
+ features.libraryTree=d.tree;features.libraryLinks=new Map(d.links.map(link=>[String(link.id),link]));
  const folderById=new Map(d.tree.map(f=>[f.id,f]));
  for(let current=folderById.get(features.folder);current?.parent_id!=null;current=folderById.get(current.parent_id))features.expandedFolders.add(current.parent_id);
  const driveButton=`<button data-action="drive-settings" title="자료를 복사할 Google Drive 폴더(G:\\내 드라이브 안) 지정">Drive 폴더${driveState.name?`: ${esc(driveState.name)}`:' 지정'}</button>`;
  const controls=canEdit()?`<div class="head-actions">${driveButton}<input type="file" id="library-folder-picker" webkitdirectory multiple hidden><button class="primary" data-action="upload-manual">＋ 자료 등록</button></div>`:`<div class="head-actions">${driveButton}</div>`;
- document.querySelector('#content').innerHTML=pageHead('DOCUMENT LIBRARY','자료 관리','폴더를 자유롭게 만들고 자료를 정리하세요.',controls)+`<section class="panel explorer"><aside class="folder-tree" aria-label="자료 폴더 탐색기"><div class="folder-tree-title">폴더</div><div class="folder-tree-row folder-tree-root ${features.folder===null?'selected':''}"><span class="folder-tree-toggle-spacer" aria-hidden="true"></span><button class="folder-tree-link" data-action="folder"><span class="explorer-folder-icon" aria-hidden="true"></span><span class="folder-tree-name">전체 자료</span></button></div>${folderTree(d.tree)}</aside><div class="explorer-main"><div class="explorer-toolbar"><nav class="breadcrumbs" aria-label="폴더 경로"><button data-action="folder">전체 자료</button>${d.breadcrumbs.map(f=>`<span>/</span><button data-action="folder" data-id="${f.id}">${esc(f.name)}</button>`).join('')}</nav><form id="library-search" class="library-search"><input name="q" aria-label="현재 폴더 검색" placeholder="현재 폴더에서 검색" value="${esc(features.libraryQuery)}"><button>검색</button></form></div><div class="table-wrap"><table class="file-table"><thead><tr><th>이름</th><th>유형</th><th>크기</th><th>등록일</th></tr></thead><tbody>${d.folders.map(f=>`<tr><td><button class="file-name" data-action="folder" data-id="${f.id}"><span class="folder-icon" aria-hidden="true">▰</span>${esc(f.name)}</button></td><td>폴더</td><td>—</td><td>${fmt(f.created_at)}</td></tr>`).join('')}${d.files.map(f=>`<tr><td><button class="file-name" data-action="preview" data-id="${f.id}"><span class="extension-icon">${esc(fileType(f.name))}</span><span>${esc(f.name)}<span class="secondary-line">${esc(f.uploaded_by_name)}</span></span></button></td><td>${esc(fileType(f.name))}</td><td>${fileSize(f.size)}</td><td>${fmt(f.created_at)}</td></tr>`).join('')}</tbody></table></div>${!d.folders.length&&!d.files.length?'<div class="empty"><h3>표시할 폴더나 파일이 없습니다</h3><p>새 폴더를 만들거나 자료를 등록하세요.<br>검색 중이라면 검색어를 바꿔 보세요.</p></div>':''}${canEdit()?`<div class="library-drop-hint">파일을 이 영역에 끌어 놓으면 <strong>${esc(features.folder===null?'전체 자료':(d.breadcrumbs.at(-1)?.name??'현재 폴더'))}</strong>에 바로 등록됩니다. 왼쪽 트리나 목록의 폴더 위에 놓으면 그 폴더에 등록됩니다.</div>`:''}<div class="footer-row"><span>폴더 ${d.folders.length}개 · 파일 ${d.total}개</span><div class="pager"><button class="small" data-action="library-prev" ${d.page<=1?'disabled':''}>이전</button><span>${d.page} / ${Math.max(1,Math.ceil(d.total/50))}</span><button class="small" data-action="library-next" ${d.page>=Math.ceil(d.total/50)?'disabled':''}>다음</button></div></div></div></section><p class="help-line">현재 위치에 자료를 등록하고 폴더 안에 폴더를 계속 만들 수 있습니다. 폴더 생성·폴더 업로드·폴더 이름 변경·폴더 이동은 빈 공간이나 폴더를 마우스 오른쪽 버튼으로 눌러 사용하세요. 파일 크기 제한 없음 · PDF, PNG, JPG, GIF, WebP, 텍스트 파일 미리보기 지원. Office·HWP 등 그 외 파일은 다운로드로 확인하세요.</p>`;
+ document.querySelector('#content').innerHTML=pageHead('DOCUMENT LIBRARY','자료 관리','폴더를 자유롭게 만들고 자료를 정리하세요.',controls)+`<section class="panel explorer"><aside class="folder-tree" aria-label="자료 폴더 탐색기"><div class="folder-tree-title">폴더</div><div class="folder-tree-row folder-tree-root ${features.folder===null?'selected':''}"><span class="folder-tree-toggle-spacer" aria-hidden="true"></span><button class="folder-tree-link" data-action="folder"><span class="explorer-folder-icon" aria-hidden="true"></span><span class="folder-tree-name">전체 자료</span></button></div>${folderTree(d.tree)}</aside><div class="explorer-main"><div class="explorer-toolbar"><nav class="breadcrumbs" aria-label="폴더 경로"><button data-action="folder">전체 자료</button>${d.breadcrumbs.map(f=>`<span>/</span><button data-action="folder" data-id="${f.id}">${esc(f.name)}</button>`).join('')}</nav><form id="library-search" class="library-search"><input name="q" aria-label="현재 폴더 검색" placeholder="현재 폴더에서 검색" value="${esc(features.libraryQuery)}"><button>검색</button></form></div><div class="table-wrap"><table class="file-table"><thead><tr><th>이름</th><th>유형</th><th>크기</th><th>등록일</th></tr></thead><tbody>${d.folders.map(f=>`<tr><td><button class="file-name" data-action="folder" data-id="${f.id}"><span class="folder-icon" aria-hidden="true">▰</span>${esc(f.name)}</button></td><td>폴더</td><td>—</td><td>${fmt(f.created_at)}</td></tr>`).join('')}${d.links.map(l=>`<tr><td><a class="file-name library-link" href="${esc(l.url)}" target="_blank" rel="noopener noreferrer" data-link-id="${l.id}" data-id="${l.id}" title="${esc(l.url)} (새 탭에서 열기)"><span class="extension-icon link-icon" aria-hidden="true">URL</span><span>${esc(l.name)}<span class="secondary-line">${esc(linkHost(l.url))} ↗</span></span></a></td><td>링크</td><td>—</td><td>${fmt(l.created_at)}</td></tr>`).join('')}${d.files.map(f=>`<tr><td><button class="file-name" data-action="preview" data-id="${f.id}"><span class="extension-icon">${esc(fileType(f.name))}</span><span>${esc(f.name)}<span class="secondary-line">${esc(f.uploaded_by_name)}</span></span></button></td><td>${esc(fileType(f.name))}</td><td>${fileSize(f.size)}</td><td>${fmt(f.created_at)}</td></tr>`).join('')}</tbody></table></div>${!d.folders.length&&!d.files.length&&!d.links.length?'<div class="empty"><h3>표시할 폴더나 파일이 없습니다</h3><p>새 폴더를 만들거나 자료를 등록하세요.<br>검색 중이라면 검색어를 바꿔 보세요.</p></div>':''}${canEdit()?`<div class="library-drop-hint">파일을 이 영역에 끌어 놓으면 <strong>${esc(features.folder===null?'전체 자료':(d.breadcrumbs.at(-1)?.name??'현재 폴더'))}</strong>에 바로 등록됩니다. 왼쪽 트리나 목록의 폴더 위에 놓으면 그 폴더에 등록됩니다.</div>`:''}<div class="footer-row"><span>폴더 ${d.folders.length}개${d.links.length?` · 링크 ${d.links.length}개`:''} · 파일 ${d.total}개</span><div class="pager"><button class="small" data-action="library-prev" ${d.page<=1?'disabled':''}>이전</button><span>${d.page} / ${Math.max(1,Math.ceil(d.total/50))}</span><button class="small" data-action="library-next" ${d.page>=Math.ceil(d.total/50)?'disabled':''}>다음</button></div></div></div></section><p class="help-line">현재 위치에 자료를 등록하고 폴더 안에 폴더를 계속 만들 수 있습니다. 폴더 생성·폴더 업로드·링크 추가·폴더 이름 변경·폴더 이동은 빈 공간이나 폴더를 마우스 오른쪽 버튼으로 눌러 사용하세요. 링크는 누르면 새 탭에서 바로 열리며, 브라우저 주소창의 주소를 끌어 놓아도 추가됩니다. 파일 크기 제한 없음 · PDF, PNG, JPG, GIF, WebP, 텍스트 파일 미리보기 지원. Office·HWP 등 그 외 파일은 다운로드로 확인하세요.</p>`;
  decorateListing('library',d.total,d.page);
  enableColumnResize(document.querySelector('#content .file-table'),'library'); enableTreeResize(document.querySelector('#content .explorer'));
 }
@@ -931,7 +960,7 @@ async function previewDialog(id){
 function renderSettings(){
  const dark=document.documentElement.dataset.theme==='dark';
  document.querySelector('#content').innerHTML=pageHead('PREFERENCES','설정','작업 환경과 계정 설정을 관리하세요.')+`${state.user.role==='admin'?`<section class="panel settings-panel"><div class="panel-head"><h2>관리자 메뉴</h2><small>관리자 계정에만 표시됩니다.</small></div><div class="settings-admin-links"><button class="settings-admin-link" data-view="users"><strong>사용자 관리</strong><small>계정 추가·수정·비활성화, 권한과 비밀번호 재설정</small></button><button class="settings-admin-link" data-view="backups"><strong>백업/복구</strong><small>온라인 백업 생성·다운로드, 선택한 시점으로 복구</small></button><button class="settings-admin-link" data-view="operations"><strong>운영관리</strong><small>서버 상태·건수 확인, 설계도·화면 디자인·운영자 매뉴얼(PDF)</small></button><button class="settings-admin-link" data-view="usage"><strong>사용량 관리</strong><small>드라이브 여유 공간, 데이터베이스·백업·첨부파일 용량</small></button></div></section>`:''}<section class="panel settings-panel"><div class="panel-head"><h2>바로가기</h2></div><div class="settings-admin-links"><a class="settings-admin-link settings-external-link" href="https://github.com/dykim-tech/portal" target="_blank" rel="noopener"><strong>GitHub 저장소</strong><small>포털 프로그램 코드와 변경 기록 (새 탭에서 열기)</small></a></div></section><section class="panel settings-panel"><div class="panel-head"><h2>화면 모드</h2><small>이 브라우저에 저장됩니다.</small></div><div class="theme-options"><button class="theme-option ${!dark?'selected':''}" data-action="theme" data-mode="light" aria-pressed="${!dark}"><span class="theme-swatch light-swatch">Aa</span><strong>일반 모드</strong><small>밝은 배경의 기본 화면</small></button><button class="theme-option ${dark?'selected':''}" data-action="theme" data-mode="dark" aria-pressed="${dark}"><span class="theme-swatch dark-swatch">Aa</span><strong>다크 모드</strong><small>눈부심이 적은 어두운 화면</small></button></div></section><section class="panel settings-panel"><div class="panel-head"><h2>내 계정</h2></div><div class="settings-account"><div><strong>${esc(state.user.name)}</strong><p class="muted">${esc(state.user.email)} · ${labels[state.user.role]}</p></div><button data-action="password">비밀번호 변경</button></div></section>`;
- document.querySelector('#content .theme-options').closest('.settings-panel').insertAdjacentHTML('afterend','<section class="panel settings-panel"><div class="panel-head"><h2>메뉴 순서 편집</h2><small>왼쪽 메뉴 순서 · 이 브라우저에 저장됩니다.</small></div><div id="settings-menu-order" class="settings-menu-order"></div></section>');
+ document.querySelector('#content .theme-options').closest('.settings-panel').insertAdjacentHTML('afterend','<section class="panel settings-panel"><div class="panel-head"><h2>메뉴 순서 편집</h2><small>왼쪽·상단 메뉴 순서 · 이 브라우저에 저장됩니다.</small></div><div id="settings-menu-order" class="settings-menu-order"></div></section>');
  renderSettingsMenu();
 }
 async function featureAction(action,id,button){
@@ -968,6 +997,11 @@ async function featureAction(action,id,button){
  }
  case 'move-folder':await folderMoveDialog(id);return true;
  case 'edit-manual':await manualEditDialog(id);return true;
+ case 'new-link':{const target=button.dataset.targetId===undefined?features.folder??null:(button.dataset.targetId?Number(button.dataset.targetId):null);openDialog('링크 추가',`<form id="link-form" data-folder-id="${target??''}">${input('url','주소 *','','required maxlength="2000" placeholder="https://example.com" inputmode="url"')}${input('name','이름','','maxlength="200" placeholder="비워 두면 주소로 표시"')}<p class="help-line">추가 위치: ${esc(libraryFolderName(target))} · http:// 또는 https:// 웹 주소를 저장합니다. 목록에서 누르면 새 탭에서 바로 열립니다.</p><div class="form-actions"><button type="button" data-action="close">취소</button><button class="primary">추가</button></div></form>`);return true;}
+ case 'open-link':{const link=features.libraryLinks?.get(String(id));if(link)window.open(link.url,'_blank','noopener,noreferrer');return true;}
+ case 'copy-link':{const link=features.libraryLinks?.get(String(id));if(link){await navigator.clipboard.writeText(link.url);toast('링크 주소를 복사했습니다.');}return true;}
+ case 'edit-link':{const link=features.libraryLinks?.get(String(id));if(!link)throw new Error('링크를 다시 선택해 주세요.');const tree=features.libraryTree??[];features.pickerFolders=tree;openDialog('링크 수정',`<form id="link-edit-form" data-id="${link.id}">${input('url','주소 *',link.url,'required maxlength="2000" inputmode="url"')}${input('name','이름',link.name,'maxlength="200"')}<div class="picker-label">소속 폴더</div>${folderPickerHtml({name:'folder_id',folders:tree,value:link.folder_id==null?'root':String(link.folder_id)})}<div class="form-actions"><button type="button" data-action="close">취소</button><button class="primary">저장</button></div></form>`);return true;}
+ case 'move-link':{const link=features.libraryLinks?.get(String(id));if(!link)throw new Error('링크를 다시 선택해 주세요.');const tree=features.libraryTree??[],byId=new Map(tree.map(folder=>[folder.id,folder]));features.pickerFolders=tree;openDialog('링크 이동',`<form id="link-move-form" data-id="${link.id}"><p><strong>${esc(link.name)}</strong></p><p class="help-line">현재 위치: ${esc(link.folder_id==null?'전체 자료':libraryFolderPath(byId.get(link.folder_id),byId))}</p><div class="picker-label">이동할 위치 *</div>${folderPickerHtml({name:'folder_id',folders:tree,disabled:link.folder_id!=null?new Map([[link.folder_id,'현재 위치']]):new Map(),rootDisabled:link.folder_id==null?'현재 위치':''})}<div class="form-actions"><button type="button" data-action="close">취소</button><button class="primary">이동</button></div></form>`);return true;}
  case 'move-manual':await manualMoveDialog(id);return true;
  case 'preview':await previewDialog(id);return true;
  case 'pdf-prev':case 'pdf-next':pdfPage+=action==='pdf-prev'?-1:1;await renderPdfPage();return true;
@@ -990,6 +1024,9 @@ async function featureSubmit(form,values){
  case 'folder-form':{const parent=form.dataset.parentId?Number(form.dataset.parentId):null,created=await api('/folders',{method:'POST',body:{...values,parent_id:parent}});if(parent!=null)features.expandedFolders.add(parent);features.folder=created.id;features.libraryPage=1;features.libraryQuery='';modal.close();await renderLibrary();toast('폴더를 만들었습니다.');}return true;
  case 'manual-form':await api('/manuals?'+new URLSearchParams({folder:features.folder??''}),{method:'POST',body:new FormData(form)});modal.close();await renderLibrary();toast('자료를 등록했습니다.');return true;
  case 'installation-upload':{const file=form.elements.file.files[0];await api('/installations/'+features.installation.id+'/files',{method:'POST',body:new FormData(form)});await installationDialog(features.installation.id);await renderView();toast('첨부자료를 등록했습니다.');}return true;
+ case 'link-form':{const folderId=form.dataset.folderId?Number(form.dataset.folderId):null;await api('/library-links',{method:'POST',body:{url:values.url,name:values.name,folder_id:folderId}});modal.close();if(folderId!==features.folder){features.folder=folderId;features.libraryQuery='';features.libraryPage=1;}await renderLibrary();toast('링크를 추가했습니다.');return true;}
+ case 'link-edit-form':{const folderId=values.folder_id&&values.folder_id!=='root'?Number(values.folder_id):null;await api('/library-links/'+form.dataset.id,{method:'PUT',body:{url:values.url,name:values.name,folder_id:folderId}});modal.close();features.folder=folderId;features.libraryPage=1;features.libraryQuery='';await renderLibrary();toast('링크를 수정했습니다.');return true;}
+ case 'link-move-form':{if(!values.folder_id)throw new Error('이동할 위치를 선택해 주세요.');const folderId=values.folder_id==='root'?null:Number(values.folder_id);await api('/library-links/'+form.dataset.id,{method:'PUT',body:{folder_id:folderId}});modal.close();features.folder=folderId;features.libraryPage=1;features.libraryQuery='';await renderLibrary();toast('링크를 이동했습니다.');return true;}
  case 'library-search':features.libraryQuery=values.q;features.libraryPage=1;await renderLibrary();return true;
  default:return false;
  }
