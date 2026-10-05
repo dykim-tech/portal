@@ -1,5 +1,5 @@
 import { createPortal } from './app.mjs';
-import { createBackup, prepareRestoreSource, restoreDatabaseFile, latestBackupTime } from './backups.mjs';
+import { createBackup, prepareRestoreSource, restoreDatabaseFile, latestBackupTime, cleanBackupFiles } from './backups.mjs';
 import { existsSync, renameSync, rmSync, statSync, statfsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { recordActivity } from './activity.mjs';
@@ -62,6 +62,10 @@ async function restoreInPlace({ path, restoreId }) {
 
 portal = createPortal({ dataDir, backupDir, onRestore: restoreInPlace });
 portal.pruneBackups();
+try {
+  const cleaned = cleanBackupFiles(backupDir);
+  if (cleaned.removed || cleaned.converted) console.log(`Backup folder tidied: ${cleaned.removed} sidecar files removed, ${cleaned.converted} backups made standalone`);
+} catch (error) { console.warn('Backup folder cleanup failed', error); }
 await listen();
 console.log(`Portal: ${process.env.APP_ORIGIN ?? 'http://localhost:3000'}`);
 console.log(`First-run setup code, if needed: ${portal.tokenPath}`);
@@ -114,7 +118,9 @@ const timer = setInterval(() => {
 }, 60000);
 function close() {
   clearInterval(timer);
-  if (server?.listening) server.close(() => { portal.db.close(); process.exit(0); });
+  // 진행 중인 다운로드가 있어도 5초 뒤에는 연결을 끊고 종료해 포트가 남지 않게 한다.
+  setTimeout(() => { try { server?.closeAllConnections?.(); portal.db.close(); } catch {} process.exit(0); }, 5000).unref();
+  if (server?.listening) { server.close(() => { portal.db.close(); process.exit(0); }); server.closeIdleConnections?.(); }
   else { try { portal.db.close(); } catch {} process.exit(0); }
 }
 process.on('SIGTERM', close);

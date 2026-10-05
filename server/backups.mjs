@@ -1,5 +1,5 @@
 import { DatabaseSync, backup as sqliteBackup } from 'node:sqlite';
-import { copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs';
+import { closeSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { Worker } from 'node:worker_threads';
@@ -18,6 +18,55 @@ const legacyColumns = {
   folders: ['id', 'parent_id', 'name'],
   manuals: ['id', 'folder_id', 'name', 'size', 'bytes', 'uploaded_by']
 };
+
+const SIDECARS = ['-wal', '-shm', '-journal'];
+const removeSidecars = path => { for (const suffix of SIDECARS) rmSync(path + suffix, { force: true }); };
+
+// 백업 파일을 단일 파일(DELETE 저널 방식)로 바꾼다. 이렇게 하면 백업을 읽기 전용으로 열거나 검사해도
+// 옆에 -wal/-shm 보조 파일이 생기지 않고, 파일 하나만 복사해도 완전한 백업이 된다.
+function makeStandalone(path) {
+  const db = new DatabaseSync(path);
+  try { db.exec('PRAGMA journal_mode=DELETE'); } finally { db.close(); }
+  removeSidecars(path);
+}
+
+// 예전 방식 백업 옆에 남은 보조 파일(-wal/-shm, .partial-wal/-shm)을 정리한다.
+// 내용이 남은 -wal 파일이 붙은 백업은 건드리지 않는다.
+export function cleanBackupFiles(backupDir) {
+  if (!existsSync(backupDir)) return { removed: 0, converted: 0 };
+  let removed = 0, converted = 0;
+  const names = new Set(readdirSync(backupDir));
+  const mains = new Set();
+  for (const name of names) {
+    const match = /^(portal-[A-Za-z0-9-]+\.sqlite(?:\.partial)?)(-wal|-shm|-journal)$/.exec(name);
+    if (!match) continue;
+    const main = match[1];
+    if (!names.has(main) || main.endsWith('.partial')) {
+      // 원본이 없거나(삭제·이름 변경됨) 중간 파일의 보조 파일이면 필요 없다. 진행 중인 백업의 .partial은 남겨 둔다.
+      if (main.endsWith('.partial') && names.has(main)) continue;
+      try { rmSync(join(backupDir, name), { force: true }); removed++; } catch (error) { console.warn(`Backup sidecar cleanup failed: ${name}`, error); }
+    } else mains.add(main);
+  }
+  // 보조 파일이 없어도 WAL 방식으로 저장된 예전 백업(헤더 18번째 바이트가 2)은 단일 파일로 바꾼다.
+  for (const name of names) {
+    if (!backupName.test(name) || mains.has(name)) continue;
+    try {
+      const fd = openSync(join(backupDir, name), 'r'), header = Buffer.alloc(20);
+      try { readSync(fd, header, 0, 20, 0); } finally { closeSync(fd); }
+      if (header.toString('latin1', 0, 15) === 'SQLite format 3' && header[18] === 2) mains.add(name);
+    } catch { /* 읽을 수 없는 파일은 건너뛴다. */ }
+  }
+  for (const main of mains) {
+    const path = join(backupDir, main);
+    try {
+      if (existsSync(path + '-wal') && statSync(path + '-wal').size > 0) { console.warn(`Backup has pending WAL data; left unchanged: ${main}`); continue; }
+      const before = SIDECARS.filter(suffix => existsSync(path + suffix)).length;
+      makeStandalone(path);
+      converted++; removed += before;
+    } catch (error) { console.warn(`Backup conversion failed: ${main}`, error); }
+  }
+  return { removed, converted };
+}
 
 export function backupPath(backupDir, name) {
   if (typeof name !== 'string' || !backupName.test(name)) throw fail(400, '백업 파일 이름을 확인해 주세요.');
@@ -43,10 +92,7 @@ export function pruneExpiredBackups(backupDir, now = Date.now(), protectedNames 
     try {
       rmSync(path);
       removed.push(name);
-      for (const suffix of ['-wal', '-shm', '.partial-wal', '.partial-shm']) {
-        const sidecar = path + suffix;
-        if (existsSync(sidecar) && lstatSync(sidecar).isFile()) rmSync(sidecar);
-      }
+      removeSidecars(path); removeSidecars(path + '.partial');
     } catch (error) { console.warn(`Expired backup cleanup failed: ${name}`, error); }
   }
   return removed;
@@ -135,18 +181,28 @@ export async function createBackup(db, backupDir, prefix = 'portal') {
   const path = join(backupDir, name), partial = path + '.partial';
   try {
     await sqliteBackup(db, partial);
+    makeStandalone(partial);
     await verifyBackupInWorker(partial);
+    removeSidecars(partial);
     renameSync(partial, path);
     return { name, size: statSync(path).size, created_at: statSync(path).mtime.toISOString() };
   } catch (error) {
     rmSync(partial, { force: true });
+    removeSidecars(partial);
     throw error;
   }
 }
 
 export function recoverInterruptedRestore(dataDir) {
   const live = join(dataDir, 'portal.sqlite');
-  if (existsSync(live) || !existsSync(dataDir)) return;
+  if (!existsSync(dataDir)) return;
+  // 복구 검사용 임시 파일의 보조 파일(-wal/-shm)이 원본 없이 남아 있으면 지운다.
+  const names = new Set(readdirSync(dataDir));
+  for (const name of names) {
+    const match = /^(portal\.sqlite\.restore-[a-f0-9]+)(-wal|-shm|-journal)$/.exec(name);
+    if (match && !names.has(match[1])) rmSync(join(dataDir, name), { force: true });
+  }
+  if (existsSync(live)) return;
   const previous = readdirSync(dataDir).filter(name => /^portal\.sqlite\.previous-[a-f0-9]+$/.test(name)).sort().at(-1);
   if (previous) renameSync(join(dataDir, previous), live);
 }
@@ -166,7 +222,7 @@ export function restoreDatabaseFile(dataDir, sourcePath) {
     try { renameSync(staged, live); }
     catch (error) { renameSync(previous, live); throw error; }
     return previous;
-  } finally { rmSync(staged, { force: true }); }
+  } finally { rmSync(staged, { force: true }); removeSidecars(staged); }
 }
 
 export function registerBackups(app, { db, backupDir, requireRole, maintenance, onRestore }) {

@@ -6,7 +6,8 @@ import { join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 import { createServer } from 'node:net';
 import { createPortal } from '../server/app.mjs';
-import { latestBackupTime, createBackup } from '../server/backups.mjs';
+import { latestBackupTime, createBackup, cleanBackupFiles, recoverInterruptedRestore } from '../server/backups.mjs';
+import { DatabaseSync } from 'node:sqlite';
 
 const freePort = () => new Promise((ok, fail) => { const s = createServer(); s.once('error', fail); s.listen(0, '127.0.0.1', () => { const { port } = s.address(); s.close(() => ok(port)); }); });
 const wait = ms => new Promise(r => setTimeout(r, ms));
@@ -59,5 +60,96 @@ test('supervisor restarts a crashed worker and the worker stops when the supervi
     assert.equal(await health(port), null, 'port is released after the supervisor is gone');
   } finally {
     if (alive(supervisor.pid)) supervisor.kill('SIGKILL');
+  }
+});
+
+test('backups are standalone files and leftover sidecar files are tidied', async () => {
+  const dataDir = mkdtempSync(join(tmpdir(), 'portal-backupfiles-')), backupDir = join(dataDir, 'backups');
+  const portal = createPortal({ dataDir, backupDir, origin: 'http://localhost:3100' });
+  try {
+    portal.db.prepare("INSERT INTO users(name,username,email,password,role,created_at) VALUES('관리자','admin','a@example.test','x','admin',datetime())").run();
+    const saved = await createBackup(portal.db, backupDir);
+    assert.deepEqual(readdirSync(backupDir), [saved.name], 'only the backup file itself remains');
+    const check = new DatabaseSync(join(backupDir, saved.name), { readOnly: true });
+    assert.equal(check.prepare('PRAGMA journal_mode').get().journal_mode, 'delete');
+    check.prepare('SELECT COUNT(*) FROM users').get(); check.close();
+    assert.deepEqual(readdirSync(backupDir), [saved.name], 'reading a backup creates no -wal/-shm files');
+
+    // 예전 방식(WAL) 백업과 그 보조 파일, 원본 없는 보조 파일
+    const old = 'portal-2026-01-01T00-00-00-000Z.sqlite', oldPath = join(backupDir, old);
+    const legacy = new DatabaseSync(oldPath); legacy.exec('PRAGMA journal_mode=WAL; CREATE TABLE t(x); INSERT INTO t VALUES(1)'); legacy.close();
+    writeFileSync(oldPath + '-wal', ''); writeFileSync(oldPath + '-shm', Buffer.alloc(32768));
+    for (const name of ['portal-2026-01-02T00-00-00-000Z.sqlite.partial-wal', 'portal-2026-01-02T00-00-00-000Z.sqlite.partial-shm', 'portal-gone.sqlite-shm']) writeFileSync(join(backupDir, name), '');
+    // 보조 파일 없이 WAL 방식으로 남은 예전 백업
+    const bare = 'portal-2026-01-03T00-00-00-000Z.sqlite';
+    const bareDb = new DatabaseSync(join(backupDir, bare)); bareDb.exec('PRAGMA journal_mode=WAL; CREATE TABLE t(x)'); bareDb.close();
+    assert.ok(!existsSync(join(backupDir, bare + '-wal')));
+    const result = cleanBackupFiles(backupDir);
+    assert.equal(result.converted, 2);
+    assert.deepEqual(readdirSync(backupDir).sort(), [old, bare, saved.name].sort());
+    assert.equal(readFileSync(join(backupDir, bare))[18], 1, 'converted to a rollback-journal (standalone) file');
+    assert.deepEqual(cleanBackupFiles(backupDir), { removed: 0, converted: 0 }, 'a second run has nothing to do');
+    const reopened = new DatabaseSync(oldPath, { readOnly: true });
+    assert.equal(reopened.prepare('SELECT x FROM t').get().x, 1);
+    assert.equal(reopened.prepare('PRAGMA journal_mode').get().journal_mode, 'delete'); reopened.close();
+
+    // 복구 검사용 임시 파일의 보조 파일만 남은 경우
+    writeFileSync(join(dataDir, 'portal.sqlite.restore-abc123-wal'), ''); writeFileSync(join(dataDir, 'portal.sqlite.restore-abc123-shm'), '');
+    recoverInterruptedRestore(dataDir);
+    assert.ok(!readdirSync(dataDir).some(name => name.startsWith('portal.sqlite.restore-')));
+  } finally { portal.db.close(); }
+});
+
+test('a slow download does not hold a read transaction that blocks WAL checkpoints', async () => {
+  const origin = 'http://localhost:3100', dataDir = mkdtempSync(join(tmpdir(), 'portal-download-'));
+  const portal = createPortal({ dataDir, backupDir: join(dataDir, 'backups'), origin });
+  const server = portal.app.listen(0, '127.0.0.1'); await new Promise(r => server.once('listening', r));
+  const base = 'http://127.0.0.1:' + server.address().port;
+  const writer = new DatabaseSync(join(dataDir, 'portal.sqlite'));
+  try {
+    const headers = { Origin: origin, 'X-Portal-Request': '1' };
+    const json = { ...headers, 'Content-Type': 'application/json' };
+    assert.equal((await fetch(base + '/api/auth/setup', { method: 'POST', headers: json, body: JSON.stringify({ token: readFileSync(portal.tokenPath, 'utf8'), name: '관리자', username: 'admin', email: 'admin@example.test', password: 'test-password-1234' }) })).status, 201);
+    const cookie = (await fetch(base + '/api/auth/login', { method: 'POST', headers: json, body: JSON.stringify({ username: 'admin', password: 'test-password-1234' }) })).headers.get('set-cookie').split(';')[0];
+    const size = 24 * 1024 * 1024, content = Buffer.alloc(size, 7); content.write('portal-download-check', 5 * 1024 * 1024);
+    const form = new FormData(); form.append('file', new Blob([content]), 'big.bin');
+    const uploaded = await fetch(base + '/api/manuals?folder=', { method: 'POST', headers: { ...headers, Cookie: cookie }, body: form });
+    assert.equal(uploaded.status, 201);
+    const id = (await uploaded.json()).manual?.id ?? portal.db.prepare('SELECT id FROM manuals ORDER BY id DESC').get().id;
+    const response = await fetch(`${base}/api/manuals/${id}/download`, { headers: { Cookie: cookie } });
+    const reader = response.body.getReader();
+    const first = await reader.read(); assert.ok(first.value.length > 0);
+    await wait(100);
+    // 다운로드가 멈춰 있는 동안 다른 쓰기와 체크포인트가 막히지 않아야 한다.
+    writer.exec('CREATE TABLE IF NOT EXISTS probe(x); INSERT INTO probe VALUES(randomblob(100000));');
+    const checkpoint = writer.prepare('PRAGMA wal_checkpoint(TRUNCATE)').get();
+    assert.equal(checkpoint.busy, 0, 'checkpoint completed while the download was paused');
+    const parts = [first.value]; for (let next; !(next = await reader.read()).done;) parts.push(next.value);
+    const received = Buffer.concat(parts.map(part => Buffer.from(part)));
+    assert.equal(received.length, size);
+    assert.ok(received.equals(content), 'downloaded bytes match the upload');
+  } finally {
+    writer.close();
+    await new Promise(r => server.close(r)); portal.db.close();
+  }
+});
+
+test('supervisor keeps retrying after repeated start failures instead of giving up', async () => {
+  const dataDir = mkdtempSync(join(tmpdir(), 'portal-retry-')), port = await freePort();
+  // 포트를 다른 프로그램이 쓰고 있어 포털이 시작하지 못하는 상황
+  const blocker = createServer(); await new Promise(r => blocker.listen(port, '127.0.0.1', r));
+  const env = { ...process.env, NODE_ENV: '', DATA_DIR: dataDir, BACKUP_DIR: join(dataDir, 'backups'), PORT: String(port), HOST: '127.0.0.1', APP_ORIGIN: `http://localhost:${port}`, AUTO_BACKUP: 'off', PORTAL_RESTART_BASE_MS: '50', PORTAL_RESTART_COOLDOWN_MS: '1500' };
+  const supervisor = spawn(process.execPath, [resolve('server/windows-start.mjs')], { env, stdio: 'ignore' });
+  const log = () => existsSync(join(dataDir, 'server.log')) ? readFileSync(join(dataDir, 'server.log'), 'utf8') : '';
+  try {
+    await until(() => /failed repeatedly; retrying in 1\.5s/.test(log()), 30000);
+    assert.ok(alive(supervisor.pid), 'supervisor is still running');
+    // 쉬는 시간 동안 포트가 비면 다음 시도에서 정상 시작한다.
+    await new Promise(r => blocker.close(r));
+    const healthy = await until(() => health(port), 30000);
+    assert.equal(healthy.database, 'ok');
+  } finally {
+    if (blocker.listening) blocker.close();
+    supervisor.kill('SIGKILL');
   }
 });

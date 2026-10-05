@@ -46,6 +46,9 @@ if (isWorker) {
   try { rotateLog(); } catch (error) { log('WARN', ['Log rotation failed:', error]); }
   const script = fileURLToPath(import.meta.url);
   const restarts = [];
+  // 시험용으로만 바꾸는 값: 재시작 기본 대기(2초)와 반복 장애 시 쉬는 시간(5분)
+  const baseDelay = Number(process.env.PORTAL_RESTART_BASE_MS) || 2000;
+  const cooldown = Number(process.env.PORTAL_RESTART_COOLDOWN_MS) || 5 * 60 * 1000;
   let child = null, stopping = false;
   const start = () => {
     // ipc 채널: 감독 프로세스가 강제 종료되면 작업 프로세스도 연결이 끊겨 스스로 종료한다(포트 3000이 남지 않도록).
@@ -57,11 +60,17 @@ if (isWorker) {
       const now = Date.now();
       while (restarts.length && now - restarts[0] > 10 * 60 * 1000) restarts.shift();
       restarts.push(now);
-      // 10분 안에 5번 넘게 멈추면 같은 문제가 반복되는 것이므로 감독도 종료하고 예약 작업의 재시작 설정에 맡긴다.
-      if (restarts.length > 5) { log('ERROR', ['Portal worker failed repeatedly; supervisor exiting']); process.exit(1); }
-      const delay = Math.min(30000, 2000 * restarts.length);
+      // 10분 안에 5번 넘게 멈추면 같은 문제가 반복되는 것이므로 5분 쉬었다가 다시 시도한다.
+      // (감독까지 종료하면 예약 작업 재시작 3회가 끝난 뒤에는 다음 로그인 때까지 포털이 꺼진 채로 남는다.)
+      if (restarts.length > 5) {
+        restarts.length = 0;
+        log('ERROR', [`Portal worker failed repeatedly; retrying in ${cooldown / 1000}s`]);
+        setTimeout(() => { if (!stopping) start(); }, cooldown);
+        return;
+      }
+      const delay = Math.min(30000, baseDelay * restarts.length);
       log('WARN', [`Portal worker exited (code ${code ?? signal}); restarting in ${delay / 1000}s`]);
-      setTimeout(start, delay);
+      setTimeout(() => { if (!stopping) start(); }, delay);
     });
   };
   const stop = () => { stopping = true; if (child) child.kill(); else process.exit(0); };

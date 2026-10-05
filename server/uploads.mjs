@@ -172,9 +172,27 @@ export function sendStoredFile(db, scope, file, res) {
   if (file.inline_size > 0) {
     return res.end(db.prepare(`SELECT bytes FROM ${scope} WHERE id=?`).get(file.id).bytes);
   }
-  const rows = db.prepare('SELECT bytes FROM file_chunks WHERE scope=? AND file_id=? ORDER BY seq').iterate(scope, file.id);
-  const source = Readable.from((function* () { for (const row of rows) yield row.bytes; })());
-  source.on('error', error => { console.error(error); res.destroy(error); });
+  // 조각을 하나씩 따로 읽는다. 다운로드 내내 읽기 트랜잭션을 열어 두면 그동안 WAL 체크포인트가 막혀
+  // 다른 업로드가 있을 때 WAL 파일이 수 GB까지 커지므로, 조각마다 짧게 읽고 바로 닫는다.
+  const chunk = db.prepare('SELECT bytes FROM file_chunks WHERE scope=? AND file_id=? AND seq=?');
+  let seq = 0, sent = 0;
+  const source = new Readable({
+    highWaterMark: 4 * 1024 * 1024,
+    read() {
+      try {
+        if (!db.isOpen) throw new Error('Database closed during download.');
+        const row = chunk.get(scope, file.id, seq++);
+        if (!row) {
+          if (sent !== file.size) throw new Error(`Stored file is incomplete (${sent}/${file.size} bytes).`);
+          this.push(null);
+          return;
+        }
+        sent += row.bytes.length;
+        this.push(row.bytes);
+      } catch (error) { this.destroy(error); }
+    }
+  });
+  source.on('error', error => { console.error(error.message); res.destroy(error); });
   res.on('close', () => source.destroy());
   source.pipe(res);
 }
