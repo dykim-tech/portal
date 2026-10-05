@@ -84,15 +84,17 @@ export function discardUpload(file) {
 
 // 큰 첨부를 한 번에 지우면 SQLite가 수 GB를 읽고 쓰는 동안 서버 전체가 멈추므로,
 // 작은 파일만 즉시 지우고 큰 파일은 기록 삭제가 확정된 뒤 조금씩 나누어 지운다.
-const IMMEDIATE_DELETE_CHUNKS = 16, PURGE_BATCH_CHUNKS = 16;
+const IMMEDIATE_DELETE_CHUNKS = 16, PURGE_SLICE_MS = 40;
 const purgeQueue = [];
 let purging = false;
 const pause = () => new Promise(resolve => setImmediate(resolve));
 
 export function deleteUploadChunks(db, scope, fileId) {
   table(scope);
-  const count = db.prepare('SELECT COUNT(*) AS n FROM file_chunks WHERE scope=? AND file_id=?').get(scope, fileId).n;
-  if (count <= IMMEDIATE_DELETE_CHUNKS) {
+  // 조각 수를 COUNT로 세면 file_chunks 특성상 조각 내용까지 모두 읽어 2.3GB 파일에 1.8초가 걸렸다(PC 실측).
+  // 17번째 조각(seq 16) 하나만 확인해 작은 파일인지 판단한다(약 7ms).
+  const large = db.prepare('SELECT 1 FROM file_chunks WHERE scope=? AND file_id=? AND seq=?').get(scope, fileId, IMMEDIATE_DELETE_CHUNKS);
+  if (!large) {
     db.prepare('DELETE FROM file_chunks WHERE scope=? AND file_id=?').run(scope, fileId);
     return;
   }
@@ -113,22 +115,40 @@ async function runChunkPurge() {
       if (!db.isOpen) continue;
       // 삭제 트랜잭션이 취소되어 기록이 남아 있으면 첨부 조각을 지우지 않는다.
       if (db.prepare(`SELECT 1 FROM ${table(scope)} WHERE id=?`).get(fileId)) continue;
-      const step = db.prepare('DELETE FROM file_chunks WHERE scope=? AND file_id=? AND seq IN (SELECT seq FROM file_chunks WHERE scope=? AND file_id=? ORDER BY seq LIMIT ?)');
-      while (db.isOpen && step.run(scope, fileId, scope, fileId, PURGE_BATCH_CHUNKS).changes > 0) await pause();
+      // 조각 하나를 지우는 데 1MB 내용을 따라가며 18ms 정도 걸리므로(PC 실측), 16개씩 지우면 매번 0.3초씩 멈췄다.
+      // 정해진 시간(약 40ms)만큼만 지우고 다른 요청에 차례를 넘긴다. 조각 번호는 0부터 이어져 있고 앞에서부터 지운다.
+      const first = db.prepare('SELECT seq FROM file_chunks WHERE scope=? AND file_id=? ORDER BY seq LIMIT 1');
+      const one = db.prepare('DELETE FROM file_chunks WHERE scope=? AND file_id=? AND seq=?');
+      let seq = first.get(scope, fileId)?.seq;
+      while (db.isOpen && seq !== undefined) {
+        const started = performance.now();
+        transaction(db, () => {
+          while (performance.now() - started < PURGE_SLICE_MS) {
+            if (one.run(scope, fileId, seq).changes) { seq++; continue; }
+            seq = first.get(scope, fileId)?.seq; // 번호가 비어 있으면 남은 첫 조각부터 다시
+            if (seq === undefined) return;
+          }
+        });
+        await pause();
+      }
     }
   } finally { purging = false; }
 }
 
 // 서버가 업로드나 정리 도중 꺼져 기록 없이 남은 첨부 조각을 시작할 때 백그라운드로 정리한다.
+// scope=? 조건으로 찾으면 SQLite가 큰 첨부의 조각 내용까지 읽어 3.9GB DB에서 시작이 2.7초 늦어졌다(PC 실측).
+// 표 전체를 한 번 훑어 (scope, file_id)만 모으면 2ms 정도이므로, 그 목록을 기록 표와 비교한다.
 export function purgeOrphanChunks(db) {
-  for (const scope of tables) {
-    for (const row of db.prepare(`SELECT DISTINCT file_id FROM file_chunks WHERE scope=? AND file_id NOT IN (SELECT id FROM ${scope})`).all(scope)) scheduleChunkPurge(db, scope, row.file_id);
+  const live = new Map([...tables].map(scope => [scope, new Set(db.prepare(`SELECT id FROM ${scope}`).all().map(row => row.id))]));
+  for (const row of db.prepare('SELECT DISTINCT scope, file_id FROM file_chunks').all()) {
+    if (live.get(row.scope)?.has(row.file_id) === false) scheduleChunkPurge(db, row.scope, row.file_id);
   }
 }
 
 // 업로드 저장: 첨부 조각을 작은 트랜잭션으로 나누어 기록하고 그 사이에 다른 요청을 처리한다.
 // 조각이 모두 기록된 뒤에만 기록 행을 만들므로 저장 중인 파일은 목록·다운로드에 나타나지 않는다.
-const UPLOAD_BATCH_CHUNKS = 8;
+// 8조각씩 묶어 기록하면 PC에서 한 번에 0.13~0.32초씩 멈췄으므로(실측), 정해진 시간(약 40ms)만큼만 기록하고 차례를 넘긴다.
+const UPLOAD_SLICE_MS = 40;
 const reservedIds = new Map();
 function reserveFileId(db, scope) {
   const recordMax = db.prepare(`SELECT COALESCE(MAX(id),0) AS n FROM ${table(scope)}`).get().n;
@@ -147,13 +167,14 @@ export async function storeUpload(db, scope, file, insertRecord) {
   let written = 0, seq = 0, done = false;
   try {
     while (!done) {
+      const started = performance.now();
       transaction(db, () => {
-        for (let count = 0; count < UPLOAD_BATCH_CHUNKS; count++) {
+        do {
           const bytesRead = readSync(fd, buffer, 0, buffer.length, null);
           if (bytesRead <= 0) { done = true; return; }
           insert.run(scope, fileId, seq++, buffer.subarray(0, bytesRead));
           written += bytesRead;
-        }
+        } while (performance.now() - started < UPLOAD_SLICE_MS);
       });
       if (!done) await pause();
     }

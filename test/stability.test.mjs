@@ -8,6 +8,7 @@ import { createServer } from 'node:net';
 import { createPortal } from '../server/app.mjs';
 import { latestBackupTime, createBackup, cleanBackupFiles, recoverInterruptedRestore, pruneExpiredBackups } from '../server/backups.mjs';
 import { DatabaseSync } from 'node:sqlite';
+import { purgeOrphanChunks, deleteUploadChunks } from '../server/uploads.mjs';
 
 const freePort = () => new Promise((ok, fail) => { const s = createServer(); s.once('error', fail); s.listen(0, '127.0.0.1', () => { const { port } = s.address(); s.close(() => ok(port)); }); });
 const wait = ms => new Promise(r => setTimeout(r, ms));
@@ -181,4 +182,30 @@ test('large deletions run in the background and a backup completes while writes 
     cleanBackupFiles(backupDir);
     await until(() => readdirSync(backupDir).length === 1, 5000);
   } finally { portal.db.close(); }
+});
+
+test('orphan attachment chunks are found by one table scan and large deletions are purged in the background', async () => {
+  const dataDir = mkdtempSync(join(tmpdir(), 'portal-chunks-'));
+  const portal = createPortal({ dataDir, backupDir: join(dataDir, 'backups'), origin: 'http://localhost:3100' });
+  const db = portal.db;
+  const insert = db.prepare('INSERT INTO file_chunks(scope,file_id,seq,bytes) VALUES(?,?,?,?)');
+  const chunks = (scope, id) => db.prepare('SELECT COUNT(*) n FROM file_chunks WHERE scope=? AND file_id=?').get(scope, id).n;
+  try {
+    db.prepare("INSERT INTO users(name,username,email,password,role,created_at) VALUES('관리자','admin','a@example.test','x','admin',datetime())").run();
+    const kept = db.prepare("INSERT INTO manuals(folder_id,name,size,bytes,uploaded_by,created_at) VALUES(NULL,'kept.bin',2,x'',1,datetime())").run().lastInsertRowid;
+    for (let seq = 0; seq < 2; seq++) insert.run('manuals', kept, seq, Buffer.alloc(1));
+    for (let seq = 0; seq < 20; seq++) insert.run('manuals', 900, seq, Buffer.alloc(1)); // 기록 없는 조각(서버가 저장 중 꺼진 경우)
+    for (let seq = 0; seq < 3; seq++) insert.run('todo_files', 901, seq, Buffer.alloc(1));
+    purgeOrphanChunks(db);
+    await until(() => chunks('manuals', 900) === 0 && chunks('todo_files', 901) === 0, 5000);
+    assert.equal(chunks('manuals', kept), 2, 'chunks of an existing record are kept');
+    // 작은 파일(16조각 이하)은 즉시, 큰 파일은 백그라운드에서 지운다.
+    for (let seq = 0; seq < 3; seq++) insert.run('manuals', 902, seq, Buffer.alloc(1));
+    deleteUploadChunks(db, 'manuals', 902);
+    assert.equal(chunks('manuals', 902), 0);
+    for (let seq = 0; seq < 17; seq++) insert.run('manuals', 903, seq, Buffer.alloc(1));
+    deleteUploadChunks(db, 'manuals', 903);
+    assert.equal(chunks('manuals', 903), 17, 'large deletion is not done synchronously');
+    await until(() => chunks('manuals', 903) === 0, 5000);
+  } finally { db.close(); }
 });
