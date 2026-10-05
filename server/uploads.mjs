@@ -2,14 +2,11 @@ import multer from 'multer';
 import { closeSync, existsSync, mkdirSync, openSync, readSync, readdirSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
+import { transaction } from './db.mjs';
 
-export const MAX_FILE_SIZE = 500 * 1024 * 1024;
-
-export function assertUploadSize(file) {
-  if (file.size > MAX_FILE_SIZE) throw Object.assign(new Error('파일은 500MB 이하로 첨부해 주세요.'), { status: 400 });
-}
+// 업로드 파일 크기 제한 없음. 디스크 여유 공간이 실제 한도가 된다.
 const CHUNK_SIZE = 1024 * 1024;
-const tables = new Set(['files', 'manuals', 'installation_files']);
+const tables = new Set(['files', 'manuals', 'installation_files', 'todo_files', 'customer_files']);
 
 function table(name) {
   if (!tables.has(name)) throw new Error('Unknown file table');
@@ -36,7 +33,7 @@ export function createUploadMiddleware(dataDir) {
       catch (error) { console.warn('Could not remove an old upload temporary file:', error); }
     }
   }
-  return multer({ dest: tempDir, limits: { fileSize: MAX_FILE_SIZE + 1, files: 1, fields: 0 } }).single('file');
+  return multer({ dest: tempDir, limits: { files: 1, fields: 0 } }).single('file');
 }
 
 export function uploadHeader(path, size = 16) {
@@ -72,15 +69,98 @@ export function discardUpload(file) {
   catch (error) { console.warn('Could not remove an upload temporary file:', error); }
 }
 
+// 큰 첨부를 한 번에 지우면 SQLite가 수 GB를 읽고 쓰는 동안 서버 전체가 멈추므로,
+// 작은 파일만 즉시 지우고 큰 파일은 기록 삭제가 확정된 뒤 조금씩 나누어 지운다.
+const IMMEDIATE_DELETE_CHUNKS = 16, PURGE_BATCH_CHUNKS = 16;
+const purgeQueue = [];
+let purging = false;
+const pause = () => new Promise(resolve => setImmediate(resolve));
+
 export function deleteUploadChunks(db, scope, fileId) {
   table(scope);
-  db.prepare('DELETE FROM file_chunks WHERE scope=? AND file_id=?').run(scope, fileId);
+  const count = db.prepare('SELECT COUNT(*) AS n FROM file_chunks WHERE scope=? AND file_id=?').get(scope, fileId).n;
+  if (count <= IMMEDIATE_DELETE_CHUNKS) {
+    db.prepare('DELETE FROM file_chunks WHERE scope=? AND file_id=?').run(scope, fileId);
+    return;
+  }
+  scheduleChunkPurge(db, scope, fileId);
+}
+
+function scheduleChunkPurge(db, scope, fileId) {
+  purgeQueue.push({ db, scope, fileId });
+  if (!purging) setImmediate(() => runChunkPurge().catch(error => console.error('Attachment cleanup failed:', error)));
+}
+
+async function runChunkPurge() {
+  if (purging) return;
+  purging = true;
+  try {
+    while (purgeQueue.length) {
+      const { db, scope, fileId } = purgeQueue.shift();
+      if (!db.isOpen) continue;
+      // 삭제 트랜잭션이 취소되어 기록이 남아 있으면 첨부 조각을 지우지 않는다.
+      if (db.prepare(`SELECT 1 FROM ${table(scope)} WHERE id=?`).get(fileId)) continue;
+      const step = db.prepare('DELETE FROM file_chunks WHERE scope=? AND file_id=? AND seq IN (SELECT seq FROM file_chunks WHERE scope=? AND file_id=? ORDER BY seq LIMIT ?)');
+      while (db.isOpen && step.run(scope, fileId, scope, fileId, PURGE_BATCH_CHUNKS).changes > 0) await pause();
+    }
+  } finally { purging = false; }
+}
+
+// 서버가 업로드나 정리 도중 꺼져 기록 없이 남은 첨부 조각을 시작할 때 백그라운드로 정리한다.
+export function purgeOrphanChunks(db) {
+  for (const scope of tables) {
+    for (const row of db.prepare(`SELECT DISTINCT file_id FROM file_chunks WHERE scope=? AND file_id NOT IN (SELECT id FROM ${scope})`).all(scope)) scheduleChunkPurge(db, scope, row.file_id);
+  }
+}
+
+// 업로드 저장: 첨부 조각을 작은 트랜잭션으로 나누어 기록하고 그 사이에 다른 요청을 처리한다.
+// 조각이 모두 기록된 뒤에만 기록 행을 만들므로 저장 중인 파일은 목록·다운로드에 나타나지 않는다.
+const UPLOAD_BATCH_CHUNKS = 8;
+const reservedIds = new Map();
+function reserveFileId(db, scope) {
+  const recordMax = db.prepare(`SELECT COALESCE(MAX(id),0) AS n FROM ${table(scope)}`).get().n;
+  const chunkMax = db.prepare('SELECT COALESCE(MAX(file_id),0) AS n FROM file_chunks WHERE scope=?').get(scope).n;
+  const next = Math.max(recordMax, chunkMax, reservedIds.get(scope) ?? 0) + 1;
+  reservedIds.set(scope, next);
+  return next;
+}
+
+export async function storeUpload(db, scope, file, insertRecord) {
+  table(scope);
+  const fileId = reserveFileId(db, scope);
+  const insert = db.prepare('INSERT INTO file_chunks(scope,file_id,seq,bytes) VALUES(?,?,?,?)');
+  const fd = openSync(file.path, 'r');
+  const buffer = Buffer.allocUnsafe(CHUNK_SIZE);
+  let written = 0, seq = 0, done = false;
+  try {
+    while (!done) {
+      transaction(db, () => {
+        for (let count = 0; count < UPLOAD_BATCH_CHUNKS; count++) {
+          const bytesRead = readSync(fd, buffer, 0, buffer.length, null);
+          if (bytesRead <= 0) { done = true; return; }
+          insert.run(scope, fileId, seq++, buffer.subarray(0, bytesRead));
+          written += bytesRead;
+        }
+      });
+      if (!done) await pause();
+    }
+    if (written !== file.size) throw new Error('Uploaded file size changed while saving.');
+    return transaction(db, () => insertRecord(fileId));
+  } catch (error) {
+    if (db.isOpen) {
+      if (seq <= IMMEDIATE_DELETE_CHUNKS) db.prepare('DELETE FROM file_chunks WHERE scope=? AND file_id=?').run(scope, fileId);
+      else if (!db.prepare(`SELECT 1 FROM ${scope} WHERE id=?`).get(fileId)) scheduleChunkPurge(db, scope, fileId);
+    }
+    throw error;
+  } finally {
+    closeSync(fd);
+  }
 }
 
 export function getStoredFile(db, scope, fileId) {
   table(scope);
-  const preview = scope === 'files' ? 'NULL AS preview_type' : 'preview_type';
-  const parent = scope === 'files' ? 'item_id' : scope === 'manuals' ? 'folder_id' : 'installation_id';
+  const preview = ['manuals', 'installation_files'].includes(scope) ? 'preview_type' : 'NULL AS preview_type';
+  const parent = {files:'item_id',manuals:'folder_id',installation_files:'installation_id',todo_files:'todo_id',customer_files:'customer_id'}[scope];
   return db.prepare(`SELECT id,name,size,created_at,${preview},${parent} AS parent_id,length(bytes) AS inline_size FROM ${scope} WHERE id=?`).get(fileId);
 }
 

@@ -5,7 +5,7 @@ import { join } from 'node:path';
 export function openDatabase(dir) {
   mkdirSync(dir, { recursive: true });
   const db = new DatabaseSync(join(dir, 'portal.sqlite'));
-  db.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;
+  db.exec(`PRAGMA journal_mode=WAL; PRAGMA journal_size_limit=67108864; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;
     CREATE TABLE IF NOT EXISTS users (
       id INTEGER PRIMARY KEY, name TEXT NOT NULL, email TEXT NOT NULL UNIQUE COLLATE NOCASE,
       username TEXT,

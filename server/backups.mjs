@@ -2,6 +2,7 @@ import { DatabaseSync, backup as sqliteBackup } from 'node:sqlite';
 import { copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { randomBytes } from 'node:crypto';
+import { Worker } from 'node:worker_threads';
 
 const fail = (status, message) => Object.assign(new Error(message), { status });
 const backupName = /^portal-[A-Za-z0-9-]+\.sqlite$/;
@@ -51,6 +52,17 @@ export function pruneExpiredBackups(backupDir, now = Date.now(), protectedNames 
   return removed;
 }
 
+// 가장 최근 일반 백업의 생성 시각(복구 직전 백업 제외). 없으면 null.
+export function latestBackupTime(backupDir) {
+  if (!existsSync(backupDir)) return null;
+  let latest = null;
+  for (const name of readdirSync(backupDir)) {
+    if (!/^portal-\d{4}-.+\.sqlite$/.test(name)) continue;
+    let time; try { time = backupCreatedAt(name, statSync(join(backupDir, name))); } catch { continue; }
+    if (Number.isFinite(time) && (latest === null || time > latest)) latest = time;
+  }
+  return latest;
+}
 export function listBackups(backupDir) {
   mkdirSync(backupDir, { recursive: true });
   return readdirSync(backupDir)
@@ -108,13 +120,22 @@ export function prepareRestoreSource(sourcePath, dataDir, migrate) {
   }
 }
 
+function verifyBackupInWorker(path) {
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(new URL('./backup-verify-worker.mjs', import.meta.url), { workerData: { path } });
+    worker.once('message', message => message.ok ? resolve() : reject(Object.assign(new Error(message.message), { status: message.status })));
+    worker.once('error', reject);
+    worker.once('exit', code => { if (code !== 0) reject(new Error(`Backup verification worker exited with code ${code}`)); });
+  });
+}
+
 export async function createBackup(db, backupDir, prefix = 'portal') {
   mkdirSync(backupDir, { recursive: true });
   const name = `${prefix}-${stamp()}-${randomBytes(3).toString('hex')}.sqlite`;
   const path = join(backupDir, name), partial = path + '.partial';
   try {
     await sqliteBackup(db, partial);
-    verifyBackup(partial);
+    await verifyBackupInWorker(partial);
     renameSync(partial, path);
     return { name, size: statSync(path).size, created_at: statSync(path).mtime.toISOString() };
   } catch (error) {

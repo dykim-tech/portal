@@ -79,18 +79,26 @@ test('categories, installation files, customer work logs, and CSV reports', asyn
     const customers = await request('/customers');
     const customer = customers.data.customers.find(row => row.name === '테스트 고객');
     assert.ok(customer, 'Installation customer is available for work logs');
-    const log = await request('/work-logs', 'POST', { customer_id: customer.id, work_date: '2026-10-01', title: '점검', work_type: 'regular', owner: '담당자', status: 'done', content: '정상 작동' });
+    const log = await request('/work-logs', 'POST', { customer_id: customer.id, work_date: '2026-10-01', title: '점검', work_type: 'regular', work_mode: 'remote', owner: '담당자', status: 'done', content: '정상 작동' });
     assert.equal(log.status, 201, JSON.stringify(log.data));
     assert.equal(log.data.log.work_type, 'regular');
+    assert.equal(log.data.log.work_mode, 'remote');
     assert.equal((await request('/work-logs?customer_id=' + customer.id)).data.total, 1);
     assert.equal((await request('/work-logs?work_type=regular')).data.total, 1);
     assert.equal((await request('/work-logs?work_type=incident')).data.total, 0);
+    assert.equal((await request('/work-logs?work_mode=remote')).data.total, 1);
+    assert.equal((await request('/work-logs?work_mode=visit')).data.total, 0);
     assert.equal((await request('/work-logs?work_type=invalid')).status, 400);
+    assert.equal((await request('/work-logs?work_mode=invalid')).status, 400);
+    assert.equal((await request('/work-logs?work_type=remote')).status, 400);
     assert.equal((await request('/work-logs', 'POST', { customer_id: customer.id, work_date: '2026-10-01', title: '유형 누락', status: 'done' })).status, 400);
-    const updatedLog = await request('/work-logs/' + log.data.log.id, 'PUT', { customer_id: customer.id, work_date: '2026-10-01', title: '점검', work_type: 'incident', owner: '담당자', status: 'done', content: '정상 작동', version: log.data.log.version });
+    assert.equal((await request('/work-logs', 'POST', { customer_id: customer.id, work_date: '2026-10-01', title: '타입 누락', work_type: 'regular', status: 'done' })).status, 400);
+    const updatedLog = await request('/work-logs/' + log.data.log.id, 'PUT', { customer_id: customer.id, work_date: '2026-10-01', title: '점검', work_type: 'incident', work_mode: 'visit', owner: '담당자', status: 'done', content: '정상 작동', version: log.data.log.version });
     assert.equal(updatedLog.status, 200, JSON.stringify(updatedLog.data));
     assert.equal(updatedLog.data.log.work_type, 'incident');
+    assert.equal(updatedLog.data.log.work_mode, 'visit');
     assert.equal((await request('/work-logs?work_type=incident')).data.total, 1);
+    assert.equal((await request('/work-logs?work_type=incident&work_mode=visit')).data.total, 1);
     assert.equal((await request('/work-logs?from=2026-10-02')).data.total, 0);
     const report = await request('/reports');
     assert.deepEqual([report.data.counts.installations, report.data.counts.items, report.data.counts.manuals, report.data.counts.work_logs], [1, 1, 1, 1]);
@@ -101,15 +109,24 @@ test('categories, installation files, customer work logs, and CSV reports', asyn
     assert.match(installationCsv.data, /설치종료일/);
     assert.match(installationCsv.data, /고객 담당자/);
     const formulaCustomer = await request('/customers', 'POST', { name: '=2+2' });
-    const formulaLog = await request('/work-logs', 'POST', { customer_id: formulaCustomer.data.customer.id, work_date: '2026-10-01', title: 'CSV 검사', work_type: 'per_call', status: 'done' });
+    const formulaLog = await request('/work-logs', 'POST', { customer_id: formulaCustomer.data.customer.id, work_date: '2026-10-01', title: 'CSV 검사', work_type: 'per_call', work_mode: 'other', status: 'done' });
     assert.equal(formulaLog.status, 201);
     const protectedCsv = await request('/reports/work-logs.csv');
     assert.match(protectedCsv.data, /"'=2\+2"/);
     assert.match(protectedCsv.data, /Per Call/);
-    const otherLog = await request('/work-logs/' + log.data.log.id, 'PUT', { customer_id: customer.id, work_date: '2026-10-01', title: '점검', work_type: 'other', owner: '담당자', status: 'done', content: '정상 작동', version: updatedLog.data.log.version });
+    assert.match(protectedCsv.data, /"업무 유형","업무 타입"/);
+    const otherLog = await request('/work-logs/' + log.data.log.id, 'PUT', { customer_id: customer.id, work_date: '2026-10-01', title: '점검', work_type: 'other', work_mode: 'other', owner: '담당자', status: 'done', content: '정상 작동', version: updatedLog.data.log.version });
     assert.equal(otherLog.status, 200, JSON.stringify(otherLog.data));
     assert.equal((await request('/work-logs?work_type=other')).data.total, 1);
     assert.match((await request('/reports/work-logs.csv')).data, /기타/);
+    const remoteLog = await request('/work-logs/' + log.data.log.id, 'PUT', { customer_id: customer.id, work_date: '2026-10-01', title: '원격 지원', work_type: 'regular', work_mode: 'remote', owner: '담당자', status: 'done', content: '원격 연결', version: otherLog.data.log.version });
+    assert.equal(remoteLog.status, 200, JSON.stringify(remoteLog.data));
+    assert.equal((await request('/work-logs?work_mode=remote')).data.total, 1);
+    assert.match((await request('/reports/work-logs.csv')).data, /원격/);
+    const visitLog = await request('/work-logs/' + log.data.log.id, 'PUT', { customer_id: customer.id, work_date: '2026-10-01', title: '방문 지원', work_type: 'regular', work_mode: 'visit', owner: '담당자', status: 'done', content: '현장 방문', version: remoteLog.data.log.version });
+    assert.equal(visitLog.status, 200, JSON.stringify(visitLog.data));
+    assert.equal((await request('/work-logs?work_mode=visit')).data.total, 1);
+    assert.match((await request('/reports/work-logs.csv')).data, /방문/);
     const workCsv = await request('/reports/work-logs.csv?from=2026-10-02');
     assert.equal(workCsv.status, 200);
     assert.doesNotMatch(workCsv.data, /정상 작동/);
@@ -184,7 +201,7 @@ test('record deletion removes attachments while customer removal preserves linke
     assert.equal((await request('/installations/' + installationId + '/files', 'POST', attachment)).status, 201);
     const fileId = (await request('/installations/' + installationId)).data.files[0].id;
     const customerId = (await request('/customers')).data.customers.find(row => row.name === '기록 고객').id;
-    const log = await request('/work-logs', 'POST', { customer_id: customerId, work_date: '2026-10-01', title: '설치 확인', work_type: 'installation', status: 'done' });
+    const log = await request('/work-logs', 'POST', { customer_id: customerId, work_date: '2026-10-01', title: '설치 확인', work_type: 'installation', work_mode: 'visit', status: 'done' });
     assert.equal((await request('/installations/' + installationId, 'DELETE', undefined, viewerCookie)).status, 403);
     assert.equal((await request('/customers/' + customerId, 'DELETE')).data.archived, true);
     assert.equal((await request('/customers')).data.customers.some(row => row.id === customerId), false);
@@ -226,26 +243,34 @@ test('existing work logs keep their contents when work types are added', () => {
   old.close();
   const portal = createPortal({ dataDir });
   try {
-    const row = portal.db.prepare('SELECT title,content,work_type FROM work_logs').get();
-    assert.deepEqual({ ...row }, { title: '기존 업무', content: '보존할 내용', work_type: null });
+    const row = portal.db.prepare('SELECT title,content,work_type,work_mode FROM work_logs').get();
+    assert.deepEqual({ ...row }, { title: '기존 업무', content: '보존할 내용', work_type: null, work_mode: null });
   } finally { portal.db.close(); }
 });
 
-test('four-type work logs migrate to allow 기타 without losing records', () => {
-  const dataDir = mkdtempSync(join(tmpdir(), 'portal-work-type-other-'));
-  const old = openDatabase(dataDir);
-  old.exec(`CREATE TABLE customers (id INTEGER PRIMARY KEY,name TEXT NOT NULL UNIQUE,contact TEXT NOT NULL DEFAULT '',notes TEXT NOT NULL DEFAULT '',active INTEGER NOT NULL DEFAULT 1,created_at TEXT NOT NULL,updated_at TEXT NOT NULL);
-    CREATE TABLE work_logs (id INTEGER PRIMARY KEY,customer_id INTEGER NOT NULL REFERENCES customers(id),work_date TEXT NOT NULL,title TEXT NOT NULL,work_type TEXT CHECK(work_type IN ('regular','incident','installation','per_call')),owner TEXT NOT NULL DEFAULT '',status TEXT NOT NULL,content TEXT NOT NULL DEFAULT '',version INTEGER NOT NULL DEFAULT 1,created_by INTEGER NOT NULL REFERENCES users(id),updated_by INTEGER NOT NULL REFERENCES users(id),created_at TEXT NOT NULL,updated_at TEXT NOT NULL);`);
-  old.prepare("INSERT INTO users(name,email,password,role,created_at) VALUES('관리자','admin@example.test','unused','admin','2026-01-01')").run();
-  old.prepare("INSERT INTO customers(name,created_at,updated_at) VALUES('기존 고객','2026-01-01','2026-01-01')").run();
-  old.prepare("INSERT INTO work_logs(customer_id,work_date,title,work_type,owner,status,content,created_by,updated_by,created_at,updated_at) VALUES(1,'2026-01-02','기존 업무','regular','담당자','done','보존할 내용',1,1,'2026-01-02','2026-01-02')").run();
-  old.close();
-  const portal = createPortal({ dataDir });
-  try {
-    assert.deepEqual({ ...portal.db.prepare('SELECT title,content,work_type FROM work_logs WHERE id=1').get() }, { title: '기존 업무', content: '보존할 내용', work_type: 'regular' });
-    portal.db.prepare("UPDATE work_logs SET work_type='other' WHERE id=1").run();
-    assert.equal(portal.db.prepare('SELECT work_type FROM work_logs WHERE id=1').get().work_type, 'other');
-    assert.equal(portal.db.prepare('PRAGMA quick_check').get().quick_check, 'ok');
-    assert.equal(portal.db.prepare('PRAGMA foreign_key_check').all().length, 0);
-  } finally { portal.db.close(); }
+test('older work logs separate 업무 유형 and 업무 타입 without losing records', () => {
+  for (const [allowed, previousType] of [
+    ["'regular','incident','installation','per_call'", 'regular'],
+    ["'regular','incident','installation','per_call','other'", 'regular'],
+    ["'regular','incident','installation','per_call','remote','visit','other'", 'remote'],
+    ["'regular','incident','installation','per_call','remote','visit','other'", 'visit']
+  ]) {
+    const dataDir = mkdtempSync(join(tmpdir(), 'portal-work-type-upgrade-'));
+    const old = openDatabase(dataDir);
+    old.exec(`CREATE TABLE customers (id INTEGER PRIMARY KEY,name TEXT NOT NULL UNIQUE,contact TEXT NOT NULL DEFAULT '',notes TEXT NOT NULL DEFAULT '',active INTEGER NOT NULL DEFAULT 1,created_at TEXT NOT NULL,updated_at TEXT NOT NULL);
+      CREATE TABLE work_logs (id INTEGER PRIMARY KEY,customer_id INTEGER NOT NULL REFERENCES customers(id),work_date TEXT NOT NULL,title TEXT NOT NULL,work_type TEXT CHECK(work_type IN (${allowed})),owner TEXT NOT NULL DEFAULT '',status TEXT NOT NULL,content TEXT NOT NULL DEFAULT '',version INTEGER NOT NULL DEFAULT 1,created_by INTEGER NOT NULL REFERENCES users(id),updated_by INTEGER NOT NULL REFERENCES users(id),created_at TEXT NOT NULL,updated_at TEXT NOT NULL);`);
+    old.prepare("INSERT INTO users(name,email,password,role,created_at) VALUES('관리자','admin@example.test','unused','admin','2026-01-01')").run();
+    old.prepare("INSERT INTO customers(name,created_at,updated_at) VALUES('기존 고객','2026-01-01','2026-01-01')").run();
+    old.prepare("INSERT INTO work_logs(customer_id,work_date,title,work_type,owner,status,content,created_by,updated_by,created_at,updated_at) VALUES(1,'2026-01-02','기존 업무',?,'담당자','done','보존할 내용',1,1,'2026-01-02','2026-01-02')").run(previousType);
+    old.close();
+    const portal = createPortal({ dataDir });
+    try {
+      assert.deepEqual({ ...portal.db.prepare('SELECT title,content,work_type,work_mode FROM work_logs WHERE id=1').get() }, { title: '기존 업무', content: '보존할 내용', work_type: previousType === 'regular' ? 'regular' : null, work_mode: previousType === 'regular' ? null : previousType });
+      portal.db.prepare("UPDATE work_logs SET work_type='other',work_mode='visit' WHERE id=1").run();
+      assert.deepEqual({ ...portal.db.prepare('SELECT work_type,work_mode FROM work_logs WHERE id=1').get() }, { work_type: 'other', work_mode: 'visit' });
+      assert.throws(() => portal.db.prepare("UPDATE work_logs SET work_type='remote' WHERE id=1").run(), /CHECK constraint failed/);
+      assert.equal(portal.db.prepare('PRAGMA quick_check').get().quick_check, 'ok');
+      assert.equal(portal.db.prepare('PRAGMA foreign_key_check').all().length, 0);
+    } finally { portal.db.close(); }
+  }
 });

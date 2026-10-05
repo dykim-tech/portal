@@ -5,7 +5,7 @@ import { initializeWork, registerWork } from './work.mjs';
 import { registerReports } from './reports.mjs';
 import helmet from 'helmet';
 import multer from 'multer';
-import { initializeUploadChunks, createUploadMiddleware, writeUploadChunks, discardUpload, deleteUploadChunks, getStoredFile, sendStoredFile, assertUploadSize } from './uploads.mjs';
+import { initializeUploadChunks, createUploadMiddleware, storeUpload, purgeOrphanChunks, discardUpload, deleteUploadChunks, getStoredFile, sendStoredFile } from './uploads.mjs';
 import { randomBytes, scrypt as scryptCallback, timingSafeEqual, createHash } from 'node:crypto';
 import { promisify } from 'node:util';
 import { existsSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs';
@@ -14,6 +14,11 @@ import { fileURLToPath } from 'node:url';
 import { openDatabase, transaction, scanDeadlines } from './db.mjs';
 import { listing } from './listing.mjs';
 import { registerBackups, recoverInterruptedRestore } from './backups.mjs';
+import { initializeActivity, recordMutation, scanMissing, scanMonthly, activityForUser, activityUnread, readActivity } from './activity.mjs';
+import { initializeProjects, registerProjects } from './projects.mjs';
+import { registerOperations } from './operations.mjs';
+import { registerUsage } from './usage.mjs';
+import { initializeTodos, registerTodos } from './todos.mjs';
 
 const scrypt = promisify(scryptCallback);
 const hash = value => createHash('sha256').update(value).digest('hex');
@@ -76,6 +81,9 @@ export function createPortal(options = {}) {
   initializeFeatures(db);
   initializeUploadChunks(db);
   initializeWork(db);
+  initializeTodos(db);
+  initializeProjects(db);
+  initializeActivity(db);
   const app = express();
   const instanceId = randomBytes(12).toString('hex');
   const maintenance = { restoring: false };
@@ -130,7 +138,8 @@ export function createPortal(options = {}) {
   const item = id => { const row = db.prepare('SELECT * FROM items WHERE id=?').get(id); if (!row) throw fail(404, '물품을 찾을 수 없습니다.'); return row; };
   const history = (id, actor, action, detail) => db.prepare('INSERT INTO history(item_id,actor_id,action,detail,created_at) VALUES(?,?,?,?,?)').run(id, actor, action, detail, now());
 
-  app.get('/api/health', (_req,res) => res.json({ ok: true, version: 3, instance_id: instanceId, restore_result: options.restoreResult ?? null }));
+  // ok는 웹 서버 응답 여부, database는 SQLite 읽기 확인 결과('ok' 또는 'error')다.
+  app.get('/api/health', (_req,res) => { let database='ok'; try { db.prepare('SELECT 1 FROM users LIMIT 1').get(); } catch { database='error'; } res.json({ ok: true, database, version: 3, instance_id: instanceId, restore_result: options.restoreResult ?? null }); });
   app.get('/api/auth/me', (req,res) => res.json({ user: req.user ? publicUser(req.user) : null, setupRequired: Boolean(setupToken) }));
   app.post('/api/auth/setup', async (req,res) => {
     limiter(req, 'setup');
@@ -155,6 +164,16 @@ export function createPortal(options = {}) {
     session(res,user); res.json({ user: publicUser(user) });
   });
   app.use('/api', requireAuth);
+  app.use('/api', (req, res, next) => {
+    const send = res.json.bind(res);
+    res.json = body => {
+      if (res.statusCode >= 200 && res.statusCode < 300) {
+        try { recordMutation(db, req, body); } catch (error) { console.error('Activity notification failed:', error); }
+      }
+      return send(body);
+    };
+    next();
+  });
   app.post('/api/auth/logout', (req,res) => { db.prepare('DELETE FROM sessions WHERE hash=?').run(req.sessionHash); res.clearCookie('portal_session',cookieOptions).json({ ok: true }); });
   app.post('/api/auth/password', async (req,res) => {
     limiter(req,'password');
@@ -236,16 +255,14 @@ export function createPortal(options = {}) {
     res.json({ok:true});
   });
   const upload=createUploadMiddleware(dataDir);
-  app.post('/api/items/:id/files',requireRole(['admin','editor']), (req,res,next)=>{item(req.params.id);next();},upload,(req,res)=>{
+  app.post('/api/items/:id/files',requireRole(['admin','editor']), (req,res,next)=>{item(req.params.id);next();},upload,async(req,res)=>{
     if(!req.file) throw fail(400,'첨부할 파일을 선택해 주세요.');
     try {
-      assertUploadSize(req.file);
       // Multer exposes multipart filenames as latin1; modern browsers send UTF-8.
       const decoded=Buffer.from(req.file.originalname,'latin1').toString('utf8');
       const name=text((decoded.includes('\uFFFD')?req.file.originalname:decoded).replace(/[\\/\u0000-\u001f\u007f]/g,'_'),'파일명',240,true);
-      transaction(db,()=>{
-        const result=db.prepare('INSERT INTO files(item_id,name,size,bytes,uploaded_by,created_at) VALUES(?,?,?,?,?,?)').run(req.params.id,name,req.file.size,Buffer.alloc(0),req.user.id,now());
-        writeUploadChunks(db,'files',Number(result.lastInsertRowid),req.file);
+      await storeUpload(db,'files',req.file,fileId=>{
+        db.prepare('INSERT INTO files(id,item_id,name,size,bytes,uploaded_by,created_at) VALUES(?,?,?,?,?,?,?)').run(fileId,req.params.id,name,req.file.size,Buffer.alloc(0),req.user.id,now());
         db.prepare('UPDATE items SET updated_at=?,updated_by=?,version=version+1 WHERE id=?').run(now(),req.user.id,req.params.id);
         history(req.params.id,req.user.id,'자료 등록',name);
       });
@@ -257,10 +274,34 @@ export function createPortal(options = {}) {
     const file=db.prepare('SELECT id,item_id,name FROM files WHERE id=?').get(req.params.id);if(!file)throw fail(404,'파일을 찾을 수 없습니다.');
     transaction(db,()=>{deleteUploadChunks(db,'files',file.id);db.prepare('DELETE FROM files WHERE id=?').run(file.id);db.prepare('UPDATE items SET updated_at=?,updated_by=?,version=version+1 WHERE id=?').run(now(),req.user.id,file.item_id);history(file.item_id,req.user.id,'자료 삭제',file.name);});res.json({ok:true});
   });
-  app.get('/api/notifications',(req,res)=>{scanDeadlines(db);res.json({notifications:db.prepare('SELECT n.*,i.asset_code FROM notifications n JOIN items i ON i.id=n.item_id WHERE n.user_id=? ORDER BY n.id DESC LIMIT 200').all(req.user.id),unread:db.prepare('SELECT COUNT(*) AS n FROM notifications WHERE user_id=? AND read_at IS NULL').get(req.user.id).n});});
-  app.post('/api/notifications/read',(req,res)=>{if(req.body.id)db.prepare('UPDATE notifications SET read_at=? WHERE id=? AND user_id=?').run(now(),integer(req.body.id,'알림',1,Number.MAX_SAFE_INTEGER),req.user.id);else db.prepare('UPDATE notifications SET read_at=? WHERE user_id=? AND read_at IS NULL').run(now(),req.user.id);res.json({ok:true});});
+  app.get('/api/notifications',(req,res)=>{
+    scanDeadlines(db);
+    const deadlines=db.prepare('SELECT n.*,i.asset_code FROM notifications n JOIN items i ON i.id=n.item_id WHERE n.user_id=? ORDER BY n.id DESC LIMIT 200').all(req.user.id)
+      .map(row=>({...row,id:`deadline:${row.id}`,scope:'items',detail:row.asset_code}));
+    const activity=activityForUser(db,req.user);
+    const notifications=[...deadlines,...activity].sort((a,b)=>b.created_at.localeCompare(a.created_at)||String(b.id).localeCompare(String(a.id))).slice(0,200);
+    const unread=db.prepare('SELECT COUNT(*) AS n FROM notifications WHERE user_id=? AND read_at IS NULL').get(req.user.id).n+activityUnread(db,req.user);
+    res.json({notifications,unread});
+  });
+  app.post('/api/notifications/read',(req,res)=>{
+    const value=req.body.id;
+    if(value){
+      if(/^activity:[1-9]\d*$/.test(String(value))) readActivity(db,req.user,value);
+      else if(/^(?:deadline:)?[1-9]\d*$/.test(String(value))) db.prepare('UPDATE notifications SET read_at=? WHERE id=? AND user_id=?').run(now(),Number(String(value).replace('deadline:','')),req.user.id);
+      else throw fail(400,'알림 번호를 확인해 주세요.');
+    }else{
+      db.prepare('UPDATE notifications SET read_at=? WHERE user_id=? AND read_at IS NULL').run(now(),req.user.id);
+      readActivity(db,req.user);
+    }
+    res.json({ok:true});
+  });
   registerFeatures(app, { db, requireRole, upload });
-  registerWork(app, { db, requireRole });
+  registerWork(app, { db, requireRole, upload });
+  registerTodos(app, { db, upload });
+  registerProjects(app, { db, requireRole });
+  registerOperations(app, { db, requireRole, instanceId });
+  registerUsage(app, { db, requireRole, dataDir, backupDir });
+  purgeOrphanChunks(db);
   registerReports(app, { db });
   const pruneBackups = registerBackups(app, { db, backupDir, requireRole, maintenance, onRestore: options.onRestore });
   app.use('/api',(_req,_res,next)=>next(fail(404,'요청한 기능을 찾을 수 없습니다.')));
@@ -269,11 +310,20 @@ export function createPortal(options = {}) {
   app.use((err,_req,res,_next)=>{
     if(err.code==='SQLITE_CONSTRAINT_UNIQUE' && /users\.username|users_username_unique/.test(err.message))return res.status(409).json({error:'이미 사용 중인 아이디입니다.'});
     if(err.code==='SQLITE_CONSTRAINT_UNIQUE' || /UNIQUE constraint failed/.test(err.message))return res.status(409).json({error:'같은 이름이나 관리번호가 이미 등록되어 있습니다.'});
-    if(err instanceof multer.MulterError)return res.status(400).json({error:err.code==='LIMIT_FILE_SIZE'?'파일은 500MB 이하로 첨부해 주세요.':'첨부 요청이 올바르지 않습니다.'});
+    if(err instanceof multer.MulterError)return res.status(400).json({error:'첨부 요청이 올바르지 않습니다.'});
+    // 사용자가 업로드를 취소하거나 창을 닫아 연결이 끊긴 경우는 서버 오류로 기록하지 않는다.
+    if(err.code==='ECONNABORTED'||err.code==='ECONNRESET'||/Request aborted/i.test(err.message))return res.headersSent?res.end():res.status(400).json({error:'업로드가 중단되었습니다.'});
     const status=err.status??500;if(status>=500)console.error(err);
     res.status(status).json({error:status>=500?'처리 중 오류가 발생했습니다. 다시 시도해 주세요.':err.message});
   });
-  scanDeadlines(db);
-  return { app, db, tokenPath, tick:()=>{ if (!maintenance.restoring) scanDeadlines(db); }, pruneBackups, instanceId, maintenance };
+  let lastDailyScan='';
+  const tick=()=>{
+    if (maintenance.restoring) return;
+    scanDeadlines(db);
+    const today=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Seoul',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+    if(today!==lastDailyScan){scanMissing(db);scanMonthly(db);lastDailyScan=today;}
+  };
+  tick();
+  return { app, db, tokenPath, tick, pruneBackups, instanceId, maintenance };
 }
 

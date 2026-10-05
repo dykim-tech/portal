@@ -41,15 +41,19 @@ test('nested library folders, editing and restarts preserve documents', async t 
       assert.equal(deepUpload.status, 201);
       deepFileId = deepUpload.data.id;
       assert.deepEqual((await request('/library?folder=' + deepFolder)).data.breadcrumbs.map(row => row.name), ['FortiGate', 'VPN', '소분류', '하위 폴더', '더 아래']);
-      for (const path of ['/manuals', '/manuals?folder=' + major, '/manuals?folder=999999']) {
-        assert.ok([400, 404].includes((await request(path, 'POST', upload())).status));
+      for (const path of ['/manuals', '/manuals?folder=' + major]) {
+        const uploaded = await request(path, 'POST', upload());
+        assert.equal(uploaded.status, 201);
+        assert.equal((await request('/manuals/' + uploaded.data.id)).data.file.folder_id, path === '/manuals' ? null : major);
+        assert.equal((await request('/manuals/' + uploaded.data.id, 'DELETE')).status, 200);
       }
+      assert.equal((await request('/manuals?folder=999999', 'POST', upload())).status, 404);
       assert.deepEqual(readdirSync(join(dataDir, 'upload-tmp')), []);
       const result = await request('/manuals?folder=' + middle, 'POST', upload());
       assert.equal(result.status, 201);
       fileId = result.data.id;
     });
-    await t.test('renames either category and updates tree, breadcrumbs and searches', async () => {
+    await t.test('renames folders and updates tree, breadcrumbs and searches', async () => {
       assert.equal((await request('/folders/' + major, 'PUT', { name: '보안 장비' })).status, 200);
       assert.equal((await request('/folders/' + middle, 'PUT', { name: 'VPN 연결' })).status, 200);
       const listing = (await request('/library?folder=' + middle)).data;
@@ -85,9 +89,11 @@ test('nested library folders, editing and restarts preserve documents', async t 
       for (const name of ['', 'changed.pdf', '../bad.txt', 'bad\u0000.txt', 'x'.repeat(241) + '.txt']) {
         assert.equal((await request('/manuals/' + fileId, 'PUT', { name })).status, 400);
       }
-      for (const folder_id of [major, null, 999999]) {
-        assert.ok([400, 404].includes((await request('/manuals/' + fileId, 'PUT', { name: '안내.txt', folder_id })).status));
+      for (const folder_id of [major, null, other]) {
+        assert.equal((await request('/manuals/' + fileId, 'PUT', { folder_id })).status, 200);
+        assert.equal((await request('/manuals/' + fileId)).data.file.folder_id, folder_id);
       }
+      assert.equal((await request('/manuals/' + fileId, 'PUT', { folder_id: 999999 })).status, 404);
       assert.equal((await request('/manuals/999999', 'PUT', { name: '안내.txt' })).status, 404);
       assert.equal((await request('/manuals/' + fileId)).data.file.name, after.name);
     });

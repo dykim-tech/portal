@@ -1,8 +1,9 @@
 import { extname } from 'node:path';
 import { transaction, koreaDate } from './db.mjs';
-import { writeUploadChunks, discardUpload, deleteUploadChunks, getStoredFile, sendStoredFile, uploadHeader, assertUploadSize } from './uploads.mjs';
+import { storeUpload, discardUpload, deleteUploadChunks, getStoredFile, sendStoredFile, uploadHeader } from './uploads.mjs';
 import { initializeCategories, registerCategories, categoryInput, categoryDescendants } from './categories.mjs';
 import { listing } from './listing.mjs';
+import { activityUnread } from './activity.mjs';
 const now=()=>new Date().toISOString();
 const fail=(status,message)=>Object.assign(new Error(message),{status});
 const val=(value,label,max=200,required=false)=>{if(value!=null&&typeof value!=='string')throw fail(400,`${label} 형식을 확인해 주세요.`);const s=(value??'').trim();if(s.length>max||(required&&!s))throw fail(400,`${label} 항목을 확인해 주세요.`);return s;};
@@ -42,8 +43,8 @@ export function registerFeatures(app,{db,requireRole,upload}){
  const edit=requireRole(['admin','editor']);
  registerCategories(app,{db,requireRole});
  const getFolder=value=>{if(value==null||value==='')return null;const folder=db.prepare('SELECT * FROM folders WHERE id=?').get(id(value));if(!folder)throw fail(404,'폴더를 찾을 수 없습니다.');return folder;};
- const documentFolder=value=>{const folder=getFolder(value);if(!folder||!folder.parent_id)throw fail(400,'중분류 또는 하위 폴더를 선택해 주세요.');return folder;};
- const folderName=value=>{const name=val(value,'분류명',100,true);if(/[\\/\u0000-\u001f\u007f]/.test(name)||['.','..'].includes(name))throw fail(400,'분류 이름에 경로 문자나 제어 문자를 사용할 수 없습니다.');return name;};
+ const documentFolder=value=>getFolder(value);
+ const folderName=value=>{const name=val(value,'폴더명',100,true);if(/[\\/\u0000-\u001f\u007f]/.test(name)||['.','..'].includes(name))throw fail(400,'폴더 이름에 경로 문자나 제어 문자를 사용할 수 없습니다.');return name;};
  const installation=value=>{const result=db.prepare('SELECT * FROM installations WHERE id=?').get(id(value));if(!result)throw fail(404,'설치 정보를 찾을 수 없습니다.');return result;};
  function installationData(body){
   if(!['planned','installed','maintenance','closed'].includes(body.status))throw fail(400,'설치 상태를 확인해 주세요.');
@@ -56,7 +57,8 @@ export function registerFeatures(app,{db,requireRole,upload}){
  }
  app.get('/api/dashboard',(req,res)=>{
    const today=koreaDate();const upcoming=new Date(Date.parse(today+'T00:00:00Z')+7*86400000).toISOString().slice(0,10);
-   res.json({counts:{assets:db.prepare('SELECT COUNT(*) n FROM items').get().n,installations:db.prepare('SELECT COUNT(*) n FROM installations').get().n,manuals:db.prepare('SELECT COUNT(*) n FROM manuals').get().n,unread:db.prepare('SELECT COUNT(*) n FROM notifications WHERE user_id=? AND read_at IS NULL').get(req.user.id).n},deadlines:db.prepare("SELECT id,name,asset_code,due_date,status FROM items WHERE due_date<=? AND status!='retired' ORDER BY due_date,id LIMIT 8").all(upcoming),recent:db.prepare('SELECT id,name,asset_code,updated_at,category FROM items ORDER BY updated_at DESC LIMIT 6').all(),installations:db.prepare('SELECT * FROM installations ORDER BY updated_at DESC LIMIT 5').all(),today});
+   const weekStart=new Date(Date.parse(today+'T00:00:00Z')-6*86400000).toISOString().slice(0,10);
+   res.json({counts:{assets:db.prepare('SELECT COUNT(*) n FROM items').get().n,installations:db.prepare('SELECT COUNT(*) n FROM installations').get().n,manuals:db.prepare('SELECT COUNT(*) n FROM manuals').get().n,unread:db.prepare('SELECT COUNT(*) n FROM notifications WHERE user_id=? AND read_at IS NULL').get(req.user.id).n+activityUnread(db,req.user)},deadlines:db.prepare("SELECT id,name,asset_code,due_date,status FROM items WHERE due_date<=? AND status!='retired' ORDER BY due_date,id LIMIT 8").all(upcoming),recent:db.prepare('SELECT id,name,asset_code,updated_at,category FROM items ORDER BY updated_at DESC LIMIT 6').all(),installations:db.prepare('SELECT * FROM installations ORDER BY installed_on DESC,updated_at DESC,id DESC LIMIT 5').all(),recentWork:db.prepare('SELECT w.id,w.title,w.work_date,w.status,c.name customer_name FROM work_logs w JOIN customers c ON c.id=w.customer_id WHERE w.work_date BETWEEN ? AND ? ORDER BY w.work_date DESC,w.updated_at DESC,w.id DESC LIMIT 7').all(weekStart,today),openTodos:db.prepare('SELECT id,title,body,target_date FROM todos WHERE user_id=? AND done=0 ORDER BY target_date DESC,updated_at DESC,id DESC LIMIT 10').all(req.user.id),openTodoCount:db.prepare('SELECT COUNT(*) n FROM todos WHERE user_id=? AND done=0').get(req.user.id).n,recentProjects:db.prepare('SELECT id,name,customer,kind,phase,status,planned_start,planned_end,updated_at FROM projects ORDER BY updated_at DESC,id DESC LIMIT 3').all(),today,weekStart});
  });
  app.get('/api/installations',(req,res)=>{
    const clauses=[],params=[];const q=val(req.query.q,'검색어',200);
@@ -82,16 +84,26 @@ export function registerFeatures(app,{db,requireRole,upload}){
  });
  app.post('/api/folders',edit,(req,res)=>{const parent=getFolder(req.body.parent_id),name=folderName(req.body.name);const result=db.prepare('INSERT INTO folders(parent_id,name,created_at) VALUES(?,?,?)').run(parent?.id??null,name,now());res.status(201).json({id:Number(result.lastInsertRowid)});});
  app.put('/api/folders/:id',edit,(req,res)=>{const folder=getFolder(req.params.id),name=folderName(req.body.name);db.prepare('UPDATE folders SET name=? WHERE id=?').run(name,folder.id);res.json({folder:getFolder(folder.id)});});
+ app.put('/api/folders/:id/move',edit,(req,res)=>{
+   const folder=getFolder(req.params.id);
+   if(!Object.hasOwn(req.body,'parent_id'))throw fail(400,'이동할 위치를 선택해 주세요.');
+   const destination=getFolder(req.body.parent_id);
+   if(folder.id===destination?.id)throw fail(400,'폴더를 자기 자신 아래로 이동할 수 없습니다.');
+   for(let cursor=destination;cursor;cursor=cursor.parent_id?getFolder(cursor.parent_id):null){
+     if(cursor.id===folder.id)throw fail(400,'하위 폴더 아래로 이동할 수 없습니다.');
+   }
+   if(folder.parent_id===destination?.id||(folder.parent_id==null&&destination==null))throw fail(400,'이미 선택한 위치에 있습니다.');
+   db.prepare('UPDATE folders SET parent_id=? WHERE id=?').run(destination?.id??null,folder.id);
+   res.json({folder:getFolder(folder.id)});
+ });
  app.delete('/api/folders/:id',edit,(req,res)=>{const folder=getFolder(req.params.id);if(db.prepare('SELECT id FROM folders WHERE parent_id=? LIMIT 1').get(folder.id)||db.prepare('SELECT id FROM manuals WHERE folder_id=? LIMIT 1').get(folder.id))throw fail(409,'비어 있는 폴더만 삭제할 수 있습니다.');db.prepare('DELETE FROM folders WHERE id=?').run(folder.id);res.json({ok:true});});
  const installationFile=value=>{const file=getStoredFile(db,'installation_files',id(value));if(!file)throw fail(404,'첨부자료를 찾을 수 없습니다.');return file;};
- app.post('/api/installations/:id/files',edit,(req,res,next)=>{installation(req.params.id);next();},upload,(req,res)=>{
+ app.post('/api/installations/:id/files',edit,(req,res,next)=>{installation(req.params.id);next();},upload,async(req,res)=>{
    if(!req.file)throw fail(400,'첨부할 파일을 선택해 주세요.');
    try {
-     assertUploadSize(req.file);
-     const record=installation(req.params.id),name=filename(req.file.originalname);
-     transaction(db,()=>{
-       const result=db.prepare('INSERT INTO installation_files(installation_id,name,size,bytes,preview_type,uploaded_by,created_at) VALUES(?,?,?,?,?,?,?)').run(record.id,name,req.file.size,Buffer.alloc(0),previewType(name,uploadHeader(req.file.path)),req.user.id,now());
-       writeUploadChunks(db,'installation_files',Number(result.lastInsertRowid),req.file);
+     const record=installation(req.params.id),name=filename(req.file.originalname),preview=previewType(name,uploadHeader(req.file.path));
+     await storeUpload(db,'installation_files',req.file,fileId=>{
+       db.prepare('INSERT INTO installation_files(id,installation_id,name,size,bytes,preview_type,uploaded_by,created_at) VALUES(?,?,?,?,?,?,?,?)').run(fileId,record.id,name,req.file.size,Buffer.alloc(0),preview,req.user.id,now());
        db.prepare('UPDATE installations SET version=version+1,updated_by=?,updated_at=? WHERE id=?').run(req.user.id,now(),record.id);
      });
      res.status(201).json({ok:true});
@@ -101,15 +113,14 @@ export function registerFeatures(app,{db,requireRole,upload}){
  app.get('/api/installation-files/:id/preview',(req,res)=>{const file=installationFile(req.params.id);if(!file.preview_type)throw fail(415,'이 파일은 다운로드하여 확인해 주세요.');res.set({'Content-Type':file.preview_type,'Content-Disposition':`inline; filename="preview${extname(file.name).replace(/[^.a-zA-Z0-9]/g,'')}"`,'Content-Security-Policy':"sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'self'"});sendStoredFile(db,'installation_files',file,res);});
  app.delete('/api/installation-files/:id',edit,(req,res)=>{const file=installationFile(req.params.id);transaction(db,()=>{deleteUploadChunks(db,'installation_files',file.id);db.prepare('DELETE FROM installation_files WHERE id=?').run(file.id);db.prepare('UPDATE installations SET version=version+1,updated_by=?,updated_at=? WHERE id=?').run(req.user.id,now(),file.parent_id);});res.json({ok:true});});
 
- app.post('/api/manuals',edit,(req,res,next)=>{documentFolder(req.query.folder);next();},upload,(req,res)=>{
+ app.post('/api/manuals',edit,(req,res,next)=>{documentFolder(req.query.folder);next();},upload,async(req,res)=>{
    if(!req.file)throw fail(400,'등록할 파일을 선택해 주세요.');
    try {
-     assertUploadSize(req.file);
-     const folder=documentFolder(req.query.folder),name=filename(req.file.originalname);
-     const fileId=transaction(db,()=>{
-       const result=db.prepare('INSERT INTO manuals(folder_id,name,size,bytes,preview_type,uploaded_by,created_at) VALUES(?,?,?,?,?,?,?)').run(folder?.id??null,name,req.file.size,Buffer.alloc(0),previewType(name,uploadHeader(req.file.path)),req.user.id,now());
-       const fileId=Number(result.lastInsertRowid);
-       writeUploadChunks(db,'manuals',fileId,req.file);
+     const folder=documentFolder(req.query.folder),name=filename(req.file.originalname),preview=previewType(name,uploadHeader(req.file.path));
+     const fileId=await storeUpload(db,'manuals',req.file,fileId=>{
+       // 저장하는 동안 폴더가 삭제되었을 수 있으므로 기록을 만들 때 다시 확인한다.
+       const target=documentFolder(folder?.id??'');
+       db.prepare('INSERT INTO manuals(id,folder_id,name,size,bytes,preview_type,uploaded_by,created_at) VALUES(?,?,?,?,?,?,?,?)').run(fileId,target?.id??null,name,req.file.size,Buffer.alloc(0),preview,req.user.id,now());
        return fileId;
      });
      res.status(201).json({id:fileId});
@@ -121,7 +132,8 @@ export function registerFeatures(app,{db,requireRole,upload}){
    const file=manual(req.params.id),name=val(req.body.name===undefined?file.name:req.body.name,'자료명',240,true);
    if(/[\\/\u0000-\u001f\u007f]/.test(name)||['.','..'].includes(name))throw fail(400,'자료 이름에 경로 문자나 제어 문자를 사용할 수 없습니다.');
    if(extname(name).toLowerCase()!==extname(file.name).toLowerCase())throw fail(400,'파일 확장자는 변경할 수 없습니다.');
-   const folderId=req.body.folder_id===undefined||String(req.body.folder_id??'')===String(file.parent_id??'')?file.parent_id:documentFolder(req.body.folder_id).id;
+   const folderId=req.body.folder_id===undefined||String(req.body.folder_id??'')===String(file.parent_id??'')
+     ?file.parent_id:(documentFolder(req.body.folder_id)?.id??null);
    db.prepare('UPDATE manuals SET name=?,folder_id=? WHERE id=?').run(name,folderId,file.id);
    res.json({ok:true});
  });

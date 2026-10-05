@@ -75,13 +75,14 @@ test('portal integration', async t=>{
       assert.equal((await request('/files/'+attachment.id)).status,404);
     });
     await t.test('notifications deduplicated, per-user read state and date removal',async()=>{
-      const before=(await request('/notifications')).data;assert.equal(before.notifications.length,1);assert.equal(before.notifications[0].kind,'today');
-      assert.equal((await request('/notifications')).data.notifications.length,1);
-      await request('/notifications/read',{method:'POST',body:{id:before.notifications[0].id},session:viewerCookie});
-      assert.equal((await request('/notifications')).data.unread,1);
+      const deadlines=data=>data.notifications.filter(notification=>String(notification.id).startsWith('deadline:'));
+      const before=(await request('/notifications')).data;assert.equal(deadlines(before).length,1);assert.equal(deadlines(before)[0].kind,'today');
+      assert.equal(deadlines((await request('/notifications')).data).length,1);
+      await request('/notifications/read',{method:'POST',body:{id:deadlines(before)[0].id},session:viewerCookie});
+      assert.equal(deadlines((await request('/notifications')).data).filter(notification=>!notification.read_at).length,1);
       await request('/notifications/read',{method:'POST',body:{}});assert.equal((await request('/notifications')).data.unread,0);
       const current=(await request('/items/'+item.id)).data.item;
-      await request('/items/'+item.id,{method:'PUT',body:{...current,due_date:null}});assert.equal((await request('/notifications')).data.notifications.length,0);
+      await request('/items/'+item.id,{method:'PUT',body:{...current,due_date:null}});assert.equal(deadlines((await request('/notifications')).data).length,0);
     });
     await t.test('disabling user revokes sessions',async()=>{
       assert.equal((await request('/users/'+viewer.id,{method:'PUT',body:{...viewer,active:false}})).status,200);
