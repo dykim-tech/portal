@@ -48,6 +48,8 @@ export function openDatabase(dir) {
   `);
   const userColumns = new Set(db.prepare('PRAGMA table_info(users)').all().map(column => column.name));
   if (!userColumns.has('username')) db.exec('ALTER TABLE users ADD COLUMN username TEXT');
+  // 사용자별 메뉴 순서(JSON 배열). 브라우저 저장소만 쓰면 다른 브라우저·PC나 저장소가 지워졌을 때 순서가 사라진다.
+  if (!userColumns.has('menu_order')) db.exec('ALTER TABLE users ADD COLUMN menu_order TEXT');
   const taken = new Set(db.prepare("SELECT lower(username) value FROM users WHERE username IS NOT NULL AND username != ''").all().map(row => row.value));
   for (const user of db.prepare("SELECT id,email FROM users WHERE username IS NULL OR username='' ORDER BY id").all()) {
     const local = user.email.split('@')[0].toLowerCase().replace(/[^a-z0-9._-]/g, '-').replace(/^[^a-z0-9]+/, '').slice(0, 24);

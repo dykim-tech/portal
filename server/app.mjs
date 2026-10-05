@@ -26,7 +26,8 @@ const roles = ['admin', 'editor', 'viewer'];
 const statuses = ['active', 'stored', 'repair', 'retired'];
 const now = () => new Date().toISOString();
 const fail = (status, message) => Object.assign(new Error(message), { status });
-const publicUser = user => ({ id: user.id, name: user.name, username: user.username, email: user.email, role: user.role, active: Boolean(user.active), created_at: user.created_at });
+const menuOrder = value => { try { const order = JSON.parse(value ?? 'null'); return Array.isArray(order) ? order.filter(id => typeof id === 'string') : null; } catch { return null; } };
+const publicUser = user => ({ id: user.id, name: user.name, username: user.username, email: user.email, role: user.role, active: Boolean(user.active), created_at: user.created_at, menu_order: menuOrder(user.menu_order) });
 function text(value, label, max = 200, required = false) {
   if (value !== undefined && typeof value !== 'string') throw fail(400, `${label} 형식이 올바르지 않습니다.`);
   const result = (value ?? '').trim();
@@ -164,6 +165,13 @@ export function createPortal(options = {}) {
     session(res,user); res.json({ user: publicUser(user) });
   });
   app.use('/api', requireAuth);
+  // 메뉴 순서는 로그인한 사용자 계정에 저장해 로그아웃·다른 브라우저에서도 유지한다.
+  app.put('/api/auth/menu-order', (req, res) => {
+    const order = req.body?.order;
+    if (order !== null && (!Array.isArray(order) || order.length > 40 || order.some(id => typeof id !== 'string' || !/^[a-z]{2,24}$/.test(id)) || new Set(order).size !== order.length)) throw fail(400, '메뉴 순서를 확인해 주세요.');
+    db.prepare('UPDATE users SET menu_order=? WHERE id=?').run(order === null ? null : JSON.stringify(order), req.user.id);
+    res.json({ ok: true, menu_order: order });
+  });
   app.use('/api', (req, res, next) => {
     const send = res.json.bind(res);
     res.json = body => {
