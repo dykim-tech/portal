@@ -1,5 +1,5 @@
 import { DatabaseSync, backup as sqliteBackup } from 'node:sqlite';
-import { closeSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs';
+import { closeSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readSync, readdirSync, renameSync, rmSync, statSync, utimesSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { Worker } from 'node:worker_threads';
@@ -7,7 +7,10 @@ import { Worker } from 'node:worker_threads';
 const fail = (status, message) => Object.assign(new Error(message), { status });
 const backupName = /^portal-[A-Za-z0-9-]+\.sqlite$/;
 const stamp = () => new Date().toISOString().replace(/[:.]/g, '-');
-const retentionMs = 3 * 24 * 60 * 60 * 1000; // 백업 보관 기간: 생성 후 3일(72시간)
+// 백업 보관 규칙(한국 날짜 기준): 오늘·어제·그제 3일치만 보관하고, 하루에는 최근 3건까지만 남긴다(최대 9건).
+// 가장 최근 백업 1건은 기간이 지나도 지우지 않는다(PC를 며칠 끈 뒤 켰을 때 새 백업이 생기기 전까지 백업이 하나도 없게 되지 않도록).
+export const BACKUP_KEEP_DAYS = 3, BACKUP_KEEP_PER_DAY = 3;
+const koreaDay = time => new Date(time + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
 const coreTables = ['users', 'items', 'installations', 'folders', 'manuals', 'work_logs'];
 const legacyTables = ['users', 'sessions', 'login_attempts', 'items', 'files', 'history', 'notifications', 'installations', 'folders', 'manuals'];
 const preservedTables = ['users', 'items', 'files', 'history', 'installations', 'folders', 'manuals'];
@@ -25,9 +28,12 @@ const removeSidecars = path => { for (const suffix of SIDECARS) rmSync(path + su
 // 백업 파일을 단일 파일(DELETE 저널 방식)로 바꾼다. 이렇게 하면 백업을 읽기 전용으로 열거나 검사해도
 // 옆에 -wal/-shm 보조 파일이 생기지 않고, 파일 하나만 복사해도 완전한 백업이 된다.
 function makeStandalone(path) {
+  const { atime, mtime } = statSync(path);
   const db = new DatabaseSync(path);
   try { db.exec('PRAGMA journal_mode=DELETE'); } finally { db.close(); }
   removeSidecars(path);
+  // 이름에 날짜가 없는 예전 백업은 수정 시각으로 생성 시점을 판단하므로 원래 시각을 유지한다.
+  utimesSync(path, atime, mtime);
 }
 
 // 예전 방식 백업 옆에 남은 보조 파일(-wal/-shm, .partial-wal/-shm)을 정리한다.
@@ -76,7 +82,8 @@ export function backupPath(backupDir, name) {
 }
 
 function backupCreatedAt(name, info) {
-  const match = /^portal-(?:pre-restore-)?(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z(?:-[a-f0-9]{6})?\.sqlite$/.exec(name);
+  // portal-날짜, portal-pre-restore-날짜, portal-pre-login-fix-날짜처럼 이름에 기록된 UTC 생성 시각을 쓴다.
+  const match = /^portal-(?:[a-z]+(?:-[a-z]+)*-)?(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z(?:-[a-f0-9]{6})?\.sqlite$/.exec(name);
   if (!match) return info.mtimeMs;
   const parsed = Date.parse(`${match[1]}T${match[2]}:${match[3]}:${match[4]}.${match[5]}Z`);
   return Number.isFinite(parsed) ? parsed : info.mtimeMs;
@@ -84,17 +91,27 @@ function backupCreatedAt(name, info) {
 
 export function pruneExpiredBackups(backupDir, now = Date.now(), protectedNames = new Set()) {
   mkdirSync(backupDir, { recursive: true });
-  const removed = [];
+  const removed = [], entries = [];
   for (const name of readdirSync(backupDir)) {
-    if (!backupName.test(name) || protectedNames.has(name)) continue;
+    if (!backupName.test(name)) continue;
     const path = join(backupDir, name), info = lstatSync(path);
-    if (!info.isFile() || backupCreatedAt(name, info) > now - retentionMs) continue;
-    try {
-      rmSync(path);
-      removed.push(name);
-      removeSidecars(path); removeSidecars(path + '.partial');
-    } catch (error) { console.warn(`Expired backup cleanup failed: ${name}`, error); }
+    if (info.isFile()) entries.push({ name, path, time: backupCreatedAt(name, info) });
   }
+  entries.sort((left, right) => right.time - left.time || right.name.localeCompare(left.name));
+  const oldestDay = koreaDay(now - (BACKUP_KEEP_DAYS - 1) * 24 * 60 * 60 * 1000);
+  const perDay = new Map();
+  entries.forEach((entry, index) => {
+    const day = koreaDay(entry.time), count = (perDay.get(day) ?? 0) + 1;
+    perDay.set(day, count);
+    // 다운로드·복구 중인 파일은 지우지 않는다(그날 건수에는 포함).
+    if (protectedNames.has(entry.name) || index === 0) return;
+    if (day >= oldestDay && count <= BACKUP_KEEP_PER_DAY) return;
+    try {
+      rmSync(entry.path);
+      removed.push(entry.name);
+      removeSidecars(entry.path); removeSidecars(entry.path + '.partial');
+    } catch (error) { console.warn(`Expired backup cleanup failed: ${entry.name}`, error); }
+  });
   return removed;
 }
 

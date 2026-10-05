@@ -73,7 +73,10 @@ test('a running portal restores a selected backup and reconnects', { timeout: 30
     assert.deepEqual(afterLegacy.restore_result, { id: legacyRestore.data.restore_id, ok: true });
     assert.equal((await request('/customers')).data.customers.length, 0);
     assert.equal(createHash('sha256').update(readFileSync(legacyPath)).digest('hex'), originalHash);
-    assert.equal((await request('/backups')).data.backups.length, 4);
+    // 같은 날 백업이 4건(일반·복구 직전 2건·이전 형식)이 되었으므로 하루 3건 제한으로 가장 오래된 일반 백업이 정리된다.
+    const remaining = (await request('/backups')).data.backups.map(row => row.name);
+    assert.equal(remaining.length, 3);
+    assert.ok(remaining.includes(legacyName) && !remaining.includes(saved.data.backup.name));
   } finally {
     child.kill();
     await Promise.race([once(child, 'exit'), new Promise(resolveWait => setTimeout(resolveWait, 2000))]);

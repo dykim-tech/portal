@@ -7,27 +7,40 @@ import { DatabaseSync } from 'node:sqlite';
 import { createPortal } from '../server/app.mjs';
 import { backupPath, createBackup, listBackups, pruneExpiredBackups, restoreDatabaseFile, verifyRestoreCandidate } from '../server/backups.mjs';
 
-test('backups expire after three days while active downloads and unrelated files are preserved', () => {
+test('backups keep three Korean calendar days and at most three per day', () => {
   const root = mkdtempSync(join(tmpdir(), 'portal-backup-retention-'));
-  const now = Date.parse('2026-10-10T12:00:00.000Z');
+  const now = Date.parse('2026-10-10T12:00:00.000Z'); // 한국 시각 10-10 21:00 → 10-08·10-09·10-10 보관
   const old = 'portal-2026-10-01T12-00-00-000Z.sqlite';
-  const boundary = 'portal-pre-restore-2026-10-07T12-00-00-000Z-abcdef.sqlite';
+  const boundary = 'portal-pre-restore-2026-10-07T12-00-00-000Z-abcdef.sqlite'; // 한국 10-07 21:00 → 삭제
+  const edge = 'portal-2026-10-07T15-00-00-000Z-aaaaaa.sqlite'; // 한국 10-08 00:00 → 보관
   const recent = 'portal-2026-10-08T12-00-00-000Z.sqlite';
   const fresh = 'portal-2026-10-09T12-00-00-000Z.sqlite';
+  const today = ['01', '02', '03', '04'].map(hour => `portal-2026-10-10T${hour}-00-00-000Z.sqlite`); // 한국 10-10에 4건
   try {
-    for (const name of [old, boundary, recent, fresh, 'notes.txt', 'portal.sqlite']) writeFileSync(join(root, name), 'test');
+    for (const name of [old, boundary, edge, recent, fresh, ...today, 'notes.txt', 'portal.sqlite']) writeFileSync(join(root, name), 'test');
     writeFileSync(join(root, old + '-wal'), 'sidecar');
     utimesSync(join(root, fresh), new Date('2026-01-01'), new Date('2026-01-01'));
     const first = pruneExpiredBackups(root, now, new Set([old]));
-    assert.deepEqual(first, [boundary]);
-    assert.equal(existsSync(join(root, old)), true);
-    assert.equal(existsSync(join(root, fresh)), true);
-    assert.equal(existsSync(join(root, recent)), true, 'a two-day-old backup is kept');
+    assert.deepEqual(first.sort(), [boundary, today[0]].sort(), 'expired day and the oldest of four same-day backups are removed');
+    for (const name of [old, edge, recent, fresh, ...today.slice(1)]) assert.equal(existsSync(join(root, name)), true, name);
     assert.equal(listBackups(root).find(row => row.name === fresh).created_at, '2026-10-09T12:00:00.000Z');
     assert.deepEqual(pruneExpiredBackups(root, now), [old]);
     assert.equal(existsSync(join(root, old + '-wal')), false);
     assert.equal(existsSync(join(root, 'notes.txt')), true);
     assert.equal(existsSync(join(root, 'portal.sqlite')), true);
+    assert.equal(listBackups(root).length, 6);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('the newest backup is kept even when every backup is past the retention days', () => {
+  const root = mkdtempSync(join(tmpdir(), 'portal-backup-newest-'));
+  try {
+    for (const name of ['portal-2026-09-01T00-00-00-000Z.sqlite', 'portal-2026-09-02T00-00-00-000Z.sqlite']) writeFileSync(join(root, name), 'test');
+    assert.deepEqual(pruneExpiredBackups(root, Date.parse('2026-10-10T00:00:00.000Z')), ['portal-2026-09-01T00-00-00-000Z.sqlite']);
+    assert.deepEqual(listBackups(root).map(row => row.name), ['portal-2026-09-02T00-00-00-000Z.sqlite']);
+    // 다른 꼬리표가 붙은 백업도 이름의 시각을 생성 시점으로 쓴다.
+    writeFileSync(join(root, 'portal-pre-login-fix-2026-09-03T01-02-03-004Z-abcdef.sqlite'), 'test');
+    assert.equal(listBackups(root).find(row => row.name.includes('pre-login-fix')).created_at, '2026-09-03T01:02:03.004Z');
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
