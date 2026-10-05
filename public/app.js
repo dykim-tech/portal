@@ -94,7 +94,7 @@ function authPage(setup){
   else {emailField.closest('label').outerHTML=loginField;root.querySelector('.auth-note').textContent='기존 계정은 이전 이메일의 @ 앞부분을 아이디로 입력하세요. 아이디가 겹치면 관리자에게 확인해 주세요.';}
 }
 function shell(){
-  const menus=[['dashboard','대시보드'],['installations','설치관리'],['projects','프로젝트 관리'],['library','자료 관리'],['items','자산 관리'],['todos','TO-DO List'],['work','업무관리'],['reports','리포트'],['tools','도구'],['outlook','Outlook'],['settings','설정']];
+  const menus=[['dashboard','대시보드'],['installations','설치관리'],['projects','프로젝트 관리'],['library','자료 관리'],['items','자산 관리'],['todos','TO-DO List'],['work','업무관리'],['reports','리포트'],['tools','도구'],['outlook','Mail'],['settings','설정']];
   sidebarMenus=menus;
   const defaults=sidebarMenus.map(([view])=>view);
   let saved=[];try{saved=JSON.parse(localStorage.getItem(sidebarMenuKey()));}catch{}
@@ -104,7 +104,7 @@ function shell(){
   renderSidebarMenu();
   applySidebarCollapsed();
 }
-// Outlook 메뉴는 화면을 바꾸지 않고 이 PC에 설치된 Outlook을 연다(scripts/windows-outlook-protocol.ps1이 등록한 portal-outlook: 주소).
+// Mail 메뉴(내부 이름 outlook)는 화면을 바꾸지 않고 이 PC에 설치된 Outlook을 연다(scripts/windows-outlook-protocol.ps1이 등록한 portal-outlook: 주소).
 // Chrome은 이 주소를 등록하기 전에 열어 둔 화면에서는 눌러도 아무 반응이 없다(새로고침하면 동작, Windows 실측).
 // Outlook이나 브라우저 확인 창이 뜨면 창의 초점이 옮겨 가므로, 2.5초 안에 초점이 그대로이면 새로고침을 안내한다.
 function launchOutlook(){
@@ -114,7 +114,7 @@ function launchOutlook(){
   toast('PC의 Outlook을 엽니다. 브라우저가 앱 열기를 물으면 허용하세요.');
   setTimeout(()=>{
     window.removeEventListener('blur',left);
-    if(!opened&&document.hasFocus())toast('Outlook이 열리지 않았습니다. 페이지를 새로고침(Ctrl+F5)한 뒤 다시 누르세요. 그래도 안 되면 운영자 매뉴얼의 Outlook 항목을 확인하세요.');
+    if(!opened&&document.hasFocus())toast('Outlook이 열리지 않았습니다. 페이지를 새로고침(Ctrl+F5)한 뒤 다시 누르세요. 그래도 안 되면 운영자 매뉴얼의 Mail 항목을 확인하세요.');
   },2500);
 }
 // 왼쪽 메뉴 접기/펴기: 상단 왼쪽의 패널 버튼으로 전환하고, 이 브라우저에 상태를 기억한다.
