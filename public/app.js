@@ -27,13 +27,11 @@ const externalTools=[
   {name:'Notion',url:'https://www.notion.so/',description:'문서·메모·업무 관리 워크스페이스'},
   // 이 PC에 설치된 Obsidian 앱을 obsidian:// 주소로 실행한다(웹 서비스가 아니므로 새 탭을 열지 않음).
   {name:'Obsidian',url:'obsidian://open',description:'메모·지식 관리 (이 PC의 Obsidian 앱 실행)',app:true},
-  // VS Code는 설치 때 등록된 vscode: 주소로 실행한다. DBeaver의 기본 dbeaver: 주소는 받은 주소를 파일로 열려고 해 실행되지 않으므로,
-  // 포털용으로 이 PC 사용자 레지스트리에 등록한 dbeaver-launch: 주소(DBeaver만 실행)를 쓴다.
+  // VS Code는 설치 때 등록된 vscode: 주소로 실행한다.
   {name:'Visual Studio Code',url:'vscode://',description:'코드 편집기 (이 PC의 VS Code 실행)',app:true},
-  {name:'DBeaver',url:'dbeaver-launch://',description:'데이터베이스 관리 도구 (이 PC의 DBeaver 실행)',app:true},
 ];
 function renderTools(){
-  document.querySelector('#content').innerHTML=pageHead('TOOLS','도구','자주 쓰는 웹 도구와 PC 앱을 바로 엽니다.')+`<section class="panel tools-panel"><div class="tools-grid">${externalTools.map(tool=>`<a class="tool-card" href="${esc(tool.url)}" ${tool.app?'':'target="_blank" rel="noopener noreferrer"'}><span class="tool-initial" aria-hidden="true">${esc(tool.name.slice(0,1).toUpperCase())}</span><span class="tool-text"><strong>${esc(tool.name)}</strong><small>${esc(tool.description)}</small><small class="tool-url">${tool.app?'PC 앱 실행':esc(tool.url.replace(/^https:\/\//,'').replace(/\/$/,''))+' ↗'}</small></span></a>`).join('')}</div></section><p class="help-line">웹 도구는 새 탭에서 열리며 인터넷 연결과 해당 서비스 계정이 필요합니다. 'PC 앱 실행' 도구(Obsidian·Visual Studio Code·DBeaver)는 이 PC에 설치된 앱을 실행하며, 처음 누를 때 브라우저가 앱 열기를 물으면 허용하세요.</p>`;
+  document.querySelector('#content').innerHTML=pageHead('TOOLS','도구','자주 쓰는 웹 도구와 PC 앱을 바로 엽니다.')+`<section class="panel tools-panel"><div class="tools-grid">${externalTools.map(tool=>`<a class="tool-card" href="${esc(tool.url)}" ${tool.app?'':'target="_blank" rel="noopener noreferrer"'}><span class="tool-initial" aria-hidden="true">${esc(tool.name.slice(0,1).toUpperCase())}</span><span class="tool-text"><strong>${esc(tool.name)}</strong><small>${esc(tool.description)}</small><small class="tool-url">${tool.app?'PC 앱 실행':esc(tool.url.replace(/^https:\/\//,'').replace(/\/$/,''))+' ↗'}</small></span></a>`).join('')}</div></section><p class="help-line">웹 도구는 새 탭에서 열리며 인터넷 연결과 해당 서비스 계정이 필요합니다. 'PC 앱 실행' 도구(Obsidian·Visual Studio Code)는 이 PC에 설치된 앱을 실행하며, 처음 누를 때 브라우저가 앱 열기를 물으면 허용하세요.</p>`;
 }
 function renderSidebarMenu(){
   const nav=document.querySelector('#sidebar-nav');if(!nav)return;

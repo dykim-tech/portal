@@ -97,7 +97,7 @@ erDiagram
 | 자산 관리 | 자산 분류 선택 → 일반/IT 자산 등록 → 상태·수량·담당자·관리 기한·첨부·변경 이력 관리·삭제 |
 | TO-DO List | 개인별 오늘의 할 일을 스티커 메모로 작성·자동 저장·완료 보드 이동·삭제 |
 | 업무관리 | 고객을 선택해 업무 유형과 업무 타입을 각각 지정한 업무일지를 작성·관리 |
-| 도구 | draw.io(https://app.diagrams.net/)·Claude(https://claude.ai/)·ChatGPT(https://chatgpt.com/)·Google Drive(https://drive.google.com/)·Notion(https://www.notion.so/) 바로가기 카드와, 이 PC에 설치된 Visual Studio Code(`vscode://`)·DBeaver(`dbeaver-launch://`, 포털용으로 사용자 레지스트리에 등록한 실행 주소) 실행 카드, 이 PC에 설치된 Obsidian 앱을 `obsidian://open` 주소로 실행하는 카드(새 탭 없이 앱 실행, 처음에 브라우저가 앱 열기 허용을 물음). 누르면 새 탭에서 열리며 포털은 해당 서비스에 로그인하거나 파일을 저장하지 않습니다. 인터넷 연결과 각 서비스 계정이 필요합니다 |
+| 도구 | draw.io(https://app.diagrams.net/)·Claude(https://claude.ai/)·ChatGPT(https://chatgpt.com/)·Google Drive(https://drive.google.com/)·Notion(https://www.notion.so/) 바로가기 카드와, 이 PC에 설치된 Visual Studio Code(`vscode://`) 실행 카드, 이 PC에 설치된 Obsidian 앱을 `obsidian://open` 주소로 실행하는 카드(새 탭 없이 앱 실행, 처음에 브라우저가 앱 열기 허용을 물음). 누르면 새 탭에서 열리며 포털은 해당 서비스에 로그인하거나 파일을 저장하지 않습니다. 인터넷 연결과 각 서비스 계정이 필요합니다 |
 | 리포트 | 기간별 설치·자료·자산·업무 현황 조회 → Excel에서 열 수 있는 UTF-8 CSV 다운로드 |
 | 사용자 관리 | 관리자가 계정과 권한 관리 (설정 → 관리자 메뉴에서 이동) |
 | 백업/복구 | 관리자가 온라인 백업 생성·목록·다운로드 및 선택한 시점 복구 (설정 → 관리자 메뉴에서 이동) |
