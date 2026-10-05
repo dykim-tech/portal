@@ -55,7 +55,6 @@
 .installation-sheet .installation-text .link-button{white-space:pre-wrap;line-height:inherit}
 
 .horizontal-nav{position:sticky;top:0;z-index:5;display:flex;gap:5px;align-items:center;overflow-x:auto;scrollbar-width:thin;white-space:nowrap;background:var(--nav-bg,#fff);border-bottom:1px solid var(--line);padding:8px 35px}
-.sidebar-foot .sidebar-link{justify-self:start;width:auto;border:0;border-radius:0;background:transparent;color:#bfdbcf;padding:0;font:inherit;font-weight:400;text-decoration:underline;text-underline-offset:3px;text-align:left}.sidebar-foot .sidebar-link:hover,.sidebar-foot .sidebar-link.active{background:transparent;color:#fff}
 .horizontal-nav button{flex:none;border:0;background:transparent;color:var(--muted);padding:9px 12px;font-size:.8125rem}
 .horizontal-nav button.active{background:var(--soft);color:var(--green);font-weight:700}
 .horizontal-nav button:hover{background:var(--soft)}
@@ -97,7 +96,6 @@
 .sidebar .brand{flex:none;margin-bottom:38px}
 .sidebar .nav button[data-view="settings"]{margin-top:6px}
 .sidebar-foot{padding-top:34px;gap:16px}
-.sidebar-foot>a,.sidebar-foot>.sidebar-link{margin-left:15px;font-size:.75rem;line-height:1.4}
 .sidebar-foot .account{margin-top:4px}
 .settings-menu-order{padding:18px 24px 24px}
 .settings-menu-list{display:grid;gap:7px;max-width:460px;margin-bottom:16px}
@@ -259,6 +257,7 @@ table.columns-sized .file-name,table.columns-sized td{min-width:0}
 .settings-admin-link{display:grid;gap:6px;text-align:left;padding:16px 18px}
 .settings-admin-link small{color:var(--muted);font-weight:400;font-size:.8125rem}
 .settings-admin-link:hover{border-color:var(--green);background:var(--soft)}
+.settings-external-link{border:1px solid var(--line);border-radius:7px;background:white;color:var(--ink);text-decoration:none;font-weight:600;font-size:.875rem}.settings-external-link:hover{border-color:var(--green);background:var(--soft)}[data-theme=dark] .settings-external-link{background:#1a2c22}[data-theme=dark] .settings-external-link:hover{background:#294737}
 @media(max-width:720px){.settings-admin-links{grid-template-columns:1fr;padding:16px}}
 /* 도구 메뉴 */
 .tools-panel{max-width:1100px}
