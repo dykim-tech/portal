@@ -305,3 +305,5 @@ table.columns-sized .file-name,table.columns-sized td{min-width:0}
 .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 .page-head.page-head-actions{justify-content:flex-end;margin-bottom:18px}.page-head-actions:empty{display:none}
 .page-greeting{margin:0 0 18px;color:var(--muted);font-size:.9375rem}
+.sidebar-toggle{flex:none;display:inline-flex;align-items:center;justify-content:center;width:34px;height:32px;padding:0;color:var(--ink)}
+.layout.sidebar-collapsed{grid-template-columns:minmax(0,1fr)}.layout.sidebar-collapsed .sidebar{display:none}.layout.sidebar-collapsed .mobile-account{display:block}

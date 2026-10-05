@@ -99,9 +99,23 @@ function shell(){
   const defaults=sidebarMenus.map(([view])=>view);
   let saved=[];try{saved=JSON.parse(localStorage.getItem(sidebarMenuKey()));}catch{}
   sidebarMenuOrder=orderedMenuIds(defaults,saved);
-  root.innerHTML=`<div class="layout"><aside class="sidebar"><div class="brand"><img src="/favicon.svg" alt=""><div>PORTAL<small>PERSONAL WORKSPACE</small></div></div><nav class="nav" id="sidebar-nav" aria-label="주 메뉴"></nav><div class="sidebar-foot"><div class="account"><strong>${esc(state.user.name)}</strong><small>${labels[state.user.role]}</small><div class="account-actions"><button data-action="password">비밀번호 변경</button><button data-action="logout">로그아웃</button></div></div></div></aside><div class="workspace"><header class="topbar"><div class="topbar-location"><button type="button" class="back-button" data-action="view-back" aria-label="이전 화면으로 돌아가기" title="이전 화면으로 돌아가기">← 뒤로가기</button><span>내 작업 공간 / <strong id="breadcrumb"></strong></span></div><div class="topbar-tools"><button class="small" data-view="notifications">알림 <span id="nav-count" class="badge" hidden></span></button><span>${esc(state.user.name)} · ${labels[state.user.role]}</span><button class="small mobile-account" data-action="account">계정</button></div></header><nav class="horizontal-nav" aria-label="가로 메뉴">${menus.map(([view,name])=>`<button data-view="${view}">${name}</button>`).join('')}</nav><main class="content" id="content"></main></div></div>`;
+  root.innerHTML=`<div class="layout"><aside class="sidebar" id="portal-sidebar"><div class="brand"><img src="/favicon.svg" alt=""><div>PORTAL<small>PERSONAL WORKSPACE</small></div></div><nav class="nav" id="sidebar-nav" aria-label="주 메뉴"></nav><div class="sidebar-foot"><div class="account"><strong>${esc(state.user.name)}</strong><small>${labels[state.user.role]}</small><div class="account-actions"><button data-action="password">비밀번호 변경</button><button data-action="logout">로그아웃</button></div></div></div></aside><div class="workspace"><header class="topbar"><div class="topbar-location"><button type="button" class="sidebar-toggle" data-action="sidebar-toggle" aria-controls="portal-sidebar"><svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true" focusable="false"><rect x="2.5" y="3.5" width="15" height="13" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><line x1="8" y1="3.5" x2="8" y2="16.5" stroke="currentColor" stroke-width="1.6"/></svg></button><button type="button" class="back-button" data-action="view-back" aria-label="이전 화면으로 돌아가기" title="이전 화면으로 돌아가기">← 뒤로가기</button><span>내 작업 공간 / <strong id="breadcrumb"></strong></span></div><div class="topbar-tools"><button class="small" data-view="notifications">알림 <span id="nav-count" class="badge" hidden></span></button><span>${esc(state.user.name)} · ${labels[state.user.role]}</span><button class="small mobile-account" data-action="account">계정</button></div></header><nav class="horizontal-nav" aria-label="가로 메뉴">${menus.map(([view,name])=>`<button data-view="${view}">${name}</button>`).join('')}</nav><main class="content" id="content"></main></div></div>`;
   root.querySelector('.brand > div').innerHTML="<span class=\"brand-title\">DYKIM'S PORTAL</span><small>PERSONAL WORKSPACE</small>";
   renderSidebarMenu();
+  applySidebarCollapsed();
+}
+// 왼쪽 메뉴 접기/펴기: 상단 왼쪽의 패널 버튼으로 전환하고, 이 브라우저에 상태를 기억한다.
+const sidebarCollapsedKey='portal-sidebar-collapsed';
+function sidebarCollapsed(){try{return localStorage.getItem(sidebarCollapsedKey)==='1';}catch{return false;}}
+function applySidebarCollapsed(collapsed=sidebarCollapsed()){
+  root.querySelector('.layout')?.classList.toggle('sidebar-collapsed',collapsed);
+  const toggle=root.querySelector('[data-action="sidebar-toggle"]');
+  if(toggle){const label=collapsed?'왼쪽 메뉴 펴기':'왼쪽 메뉴 접기';toggle.setAttribute('aria-expanded',String(!collapsed));toggle.setAttribute('aria-label',label);toggle.title=label;}
+}
+function toggleSidebar(){
+  const collapsed=!root.querySelector('.layout')?.classList.contains('sidebar-collapsed');
+  try{localStorage.setItem(sidebarCollapsedKey,collapsed?'1':'0');}catch{}
+  applySidebarCollapsed(collapsed);
 }
 // 사용자 관리·백업/복구·운영관리·사용량 관리는 설정 안의 관리자 메뉴이므로 해당 화면에서는 메뉴의 '설정'을 강조한다.
 const settingsChildViews=['users','backups','operations','usage'];
@@ -605,6 +619,7 @@ document.addEventListener('click',async event=>{
     if(button.dataset.tableSort){const kind=button.dataset.tableSort,key=button.dataset.sort,config=tableState[kind];if(!tableColumns[kind]?.includes(key))return;config.direction=config.sort===key?(config.direction==='asc'?'desc':'asc'):['updated_at','created_at','work_date','installed_on','completed_on','due_date'].includes(key)?'desc':'asc';config.sort=key;resetListingPage(kind);await renderView();return;}
     const action=button.dataset.action,id=button.dataset.id;if(!action)return;
     if(action==='view-back'){await navigateBack();return;}
+    if(action==='sidebar-toggle'){toggleSidebar();return;}
     if(action==='menu-reset'){if(state.view!=='settings')return;sidebarMenuOrder=sidebarMenus.map(([view])=>view);saveSidebarMenu();renderSidebarMenu();renderSettingsMenu();document.querySelector('[data-action="menu-reset"]')?.focus();return;}
     if(action==='menu-up'||action==='menu-down'){
       if(state.view!=='settings')return;
