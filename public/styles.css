@@ -305,5 +305,6 @@ table.columns-sized .file-name,table.columns-sized td{min-width:0}
 .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 .page-head.page-head-actions{justify-content:flex-end;margin-bottom:18px}.page-head-actions:empty{display:none}
 .page-greeting{margin:0 0 18px;color:var(--muted);font-size:.9375rem}
-.sidebar-toggle{flex:none;display:inline-flex;align-items:center;justify-content:center;width:34px;height:32px;padding:0;color:var(--ink)}
-.layout.sidebar-collapsed{grid-template-columns:minmax(0,1fr)}.layout.sidebar-collapsed .sidebar{display:none}.layout.sidebar-collapsed .mobile-account{display:block}
+.sidebar-toggle{flex:none;display:inline-flex;align-items:center;justify-content:center;width:34px;height:32px;padding:0;color:var(--ink)}.sidebar-toggle-top{display:none}.layout.sidebar-collapsed .sidebar-toggle-top{display:inline-flex}.sidebar-toggle-side{margin-left:auto;width:30px;height:30px;border-color:#ffffff33;background:transparent;color:#d6e8e0}.sidebar-toggle-side:hover{background:#ffffff1a;color:#fff}[data-theme=dark] .sidebar-toggle-side{background:transparent;color:#d6e8e0}[data-theme=dark] .sidebar-toggle-side:hover{background:#ffffff1a}
+.layout.sidebar-collapsed{grid-template-columns:minmax(0,1fr)}.layout.sidebar-collapsed .content{max-width:none}.layout.sidebar-collapsed .settings-panel,.layout.sidebar-collapsed .tools-panel{max-width:none}.layout.sidebar-collapsed .sidebar{display:none}.layout.sidebar-collapsed .mobile-account{display:block}
+@media(min-width:721px){.sidebar{padding-top:60px}.sidebar-toggle-side{position:absolute;top:16px;left:18px;margin:0}}
