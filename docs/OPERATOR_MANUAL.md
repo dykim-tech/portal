@@ -201,8 +201,8 @@ powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File '.\scripts\windows
 
 ### 4-9-1. 도구
 
-- 왼쪽(또는 상단) 메뉴의 **도구**에서 draw.io, Claude, ChatGPT, Google Drive 카드를 누르면 새 탭에서 열립니다. 포털 화면은 그대로 남습니다.
-- 주소: draw.io `https://app.diagrams.net/`, Claude `https://claude.ai/`, ChatGPT `https://chatgpt.com/`, Google Drive `https://drive.google.com/`.
+- 왼쪽(또는 상단) 메뉴의 **도구**에서 draw.io, Excalidraw, Claude, ChatGPT, Google Drive 카드를 누르면 새 탭에서 열립니다. 포털 화면은 그대로 남습니다.
+- 주소: draw.io `https://app.diagrams.net/`, Excalidraw `https://excalidraw.com/`, Claude `https://claude.ai/`, ChatGPT `https://chatgpt.com/`, Google Drive `https://drive.google.com/`.
 - **Notion** 카드는 웹(https://www.notion.so/)을 새 탭에서 엽니다.
 - **Visual Studio Code**(`vscode://`) 카드는 이 PC에 설치된 VS Code를 실행합니다. 처음 누를 때 브라우저가 앱 열기를 물으면 허용합니다.
 \1 이 PC에 설치된 Obsidian 앱(`C:\Program Files\Obsidian`)을 `obsidian://open` 주소로 실행합니다. 처음 누르면 브라우저가 'Obsidian을 열까요?'라고 묻는데, 허용하면 이후 바로 열립니다. Obsidian이 설치되지 않은 PC에서는 동작하지 않습니다.

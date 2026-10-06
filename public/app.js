@@ -22,6 +22,7 @@ function saveSidebarMenu(){try{localStorage.setItem(sidebarMenuKey(),JSON.string
 // 도구 메뉴: 자주 쓰는 외부 서비스를 새 탭에서 연다. 포털은 이 서비스들에 로그인하거나 파일을 저장하지 않는다.
 const externalTools=[
   {name:'draw.io',url:'https://app.diagrams.net/',description:'다이어그램·구성도 그리기'},
+  {name:'Excalidraw',url:'https://excalidraw.com/',description:'손그림 느낌의 화이트보드·스케치'},
   {name:'Claude',url:'https://claude.ai/',description:'Anthropic AI 어시스턴트'},
   {name:'ChatGPT',url:'https://chatgpt.com/',description:'OpenAI AI 어시스턴트'},
   {name:'Google Drive',url:'https://drive.google.com/',description:'Google 클라우드 파일 저장소'},
