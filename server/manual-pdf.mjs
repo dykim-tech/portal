@@ -39,7 +39,7 @@ const plain = text => segments(text).map(part => part.text).join('');
 
 export function renderManualPdf(markdown, { title = 'DYKIM PORTAL 운영자 매뉴얼' } = {}) {
   const font = findKoreanFont();
-  if (!font) throw Object.assign(new Error('한글 글꼴을 찾지 못해 PDF를 만들 수 없습니다. PDF_FONT 환경 변수로 글꼴 경로를 지정해 주세요.'), { status: 503 });
+  if (!font) throw Object.assign(new Error('한글 글꼴을 찾지 못해 PDF를 만들 수 없습니다. PDF_FONT 환경 변수로 글꼴 경로를 지정해 주세요.'), { status: 503, expose: true });
   const doc = new PDFDocument({ size: 'A4', margins: { top: 56, bottom: 60, left: 54, right: 54 }, bufferPages: true, info: { Title: title, Author: 'DYKIM PORTAL' } });
   doc.registerFont('regular', ...font.regular);
   doc.registerFont('bold', ...font.bold);

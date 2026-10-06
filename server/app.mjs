@@ -323,8 +323,9 @@ export function createPortal(options = {}) {
     if(err instanceof multer.MulterError)return res.status(400).json({error:'첨부 요청이 올바르지 않습니다.'});
     // 사용자가 업로드를 취소하거나 창을 닫아 연결이 끊긴 경우는 서버 오류로 기록하지 않는다.
     if(err.code==='ECONNABORTED'||err.code==='ECONNRESET'||/Request aborted/i.test(err.message))return res.headersSent?res.end():res.status(400).json({error:'업로드가 중단되었습니다.'});
-    const status=err.status??500;if(status>=500)console.error(err);
-    res.status(status).json({error:status>=500?'처리 중 오류가 발생했습니다. 다시 시도해 주세요.':err.message});
+    const status=err.status??500;if(status>=500&&!err.expose)console.error(err);
+    // 5xx는 내부 정보를 숨기고 일반 문구를 보낸다. 사용자에게 알려야 하는 안내(expose: true, 예: 한글 글꼴 없음)만 그대로 보낸다.
+    res.status(status).json({error:status>=500&&!err.expose?'처리 중 오류가 발생했습니다. 다시 시도해 주세요.':err.message});
   });
   let lastDailyScan='';
   const tick=()=>{

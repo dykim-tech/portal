@@ -10,7 +10,7 @@ export function registerOperations(app,{db,requireRole,instanceId,selfCheck}){
  const admin=requireRole(['admin']);
  // 점검 로그: 문법 검사·자동 테스트·보안 점검 결과(최근 50회). 실행 중이면 진행 상황을 함께 돌려준다.
  app.get('/api/operations/checks',admin,(_req,res)=>res.json({running:selfCheck?.status()??null,logs:selfCheck?.logs()??[]}));
- app.post('/api/operations/checks',admin,(_req,res)=>{if(!selfCheck)throw Object.assign(new Error('이 실행 방식에서는 점검을 실행할 수 없습니다.'),{status:501});res.status(202).json({running:selfCheck.start('수동 실행')});});
+ app.post('/api/operations/checks',admin,(_req,res)=>{if(!selfCheck)throw Object.assign(new Error('이 실행 방식에서는 점검을 실행할 수 없습니다.'),{status:501,expose:true});res.status(202).json({running:selfCheck.start('수동 실행')});});
  app.get('/api/operations',admin,(_req,res)=>{
   res.json({status:'running',instance_id:instanceId,started_at:new Date(Date.now()-process.uptime()*1000).toISOString(),
    uptime_seconds:Math.floor(process.uptime()),

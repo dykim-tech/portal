@@ -184,7 +184,7 @@ erDiagram
 
 ## 9. GitHub의 역할과 업데이트 흐름
 
-[GitHub 저장소](https://github.com/dykim-tech/portal)는 **설계도와 프로그램 소스의 버전 관리·변경 검토·자동 검사**를 위한 곳입니다. 문법 검사·자동 테스트·의존성 보안 검사는 2026-10-06부터 포털을 실행하는 PC가 직접 수행합니다(**운영관리 → 점검 로그**). GitHub Actions 워크플로(`.github/workflows/ci.yml`, 이름 Portal checks)는 실패 알림 메일이 너무 많아 GitHub 화면에서 **사용 안 함(Disable workflow)**으로 끕니다(파일은 그대로 두어 필요할 때 다시 켤 수 있음). 현재 포털은 블로그처럼 GitHub에서 정적 페이지만 제공하는 구조가 아닙니다. 로그인·검색·파일 업로드·업무 데이터 저장을 담당하는 Node.js 서버가 로컬 PC에서 실행되며, GitHub는 그 서버나 SQLite 운영 데이터를 실시간으로 호스팅하지 않습니다.
+[GitHub 저장소](https://github.com/dykim-tech/portal)는 **설계도와 프로그램 소스의 버전 관리·변경 검토·자동 검사**를 위한 곳입니다. 문법 검사·자동 테스트·의존성 보안 검사는 2026-10-06부터 포털을 실행하는 PC가 직접 수행합니다(**운영관리 → 점검 로그**). GitHub Actions 워크플로(`.github/workflows/ci.yml`, 이름 Portal checks)는 실패 알림 메일이 너무 많아 2026-10-06 **사용 안 함(disabled)**으로 껐습니다(파일은 그대로 두어 `gh workflow enable "Portal checks"` 또는 GitHub Actions 화면의 Enable workflow로 다시 켤 수 있음). 실패 원인은 GitHub 실행 환경에 한글 글꼴이 없어 운영자 매뉴얼 PDF가 503을 돌려줄 때 오류 처리기가 안내 문구를 일반 문구로 바꾼 것이었으며, 의도한 안내(`expose: true`)는 그대로 보내도록 고쳤습니다. 현재 포털은 블로그처럼 GitHub에서 정적 페이지만 제공하는 구조가 아닙니다. 로그인·검색·파일 업로드·업무 데이터 저장을 담당하는 Node.js 서버가 로컬 PC에서 실행되며, GitHub는 그 서버나 SQLite 운영 데이터를 실시간으로 호스팅하지 않습니다.
 
 ~~~mermaid
 flowchart LR
