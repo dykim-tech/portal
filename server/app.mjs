@@ -17,6 +17,7 @@ import { registerBackups, recoverInterruptedRestore } from './backups.mjs';
 import { initializeActivity, recordMutation, scanMissing, scanMonthly, activityForUser, activityUnread, readActivity } from './activity.mjs';
 import { initializeProjects, registerProjects } from './projects.mjs';
 import { registerOperations } from './operations.mjs';
+import { createSelfCheck } from './self-check.mjs';
 import { registerUsage } from './usage.mjs';
 import { initializeTodos, registerTodos } from './todos.mjs';
 
@@ -307,7 +308,8 @@ export function createPortal(options = {}) {
   registerWork(app, { db, requireRole, upload });
   registerTodos(app, { db, upload });
   registerProjects(app, { db, requireRole });
-  registerOperations(app, { db, requireRole, instanceId });
+  const selfCheck = options.selfCheck === false ? null : createSelfCheck({ dataDir });
+  registerOperations(app, { db, requireRole, instanceId, selfCheck });
   registerUsage(app, { db, requireRole, dataDir, backupDir });
   purgeOrphanChunks(db);
   registerReports(app, { db });
@@ -332,6 +334,6 @@ export function createPortal(options = {}) {
     if(today!==lastDailyScan){scanMissing(db);scanMonthly(db);lastDailyScan=today;}
   };
   tick();
-  return { app, db, tokenPath, tick, pruneBackups, instanceId, maintenance };
+  return { app, db, tokenPath, tick, pruneBackups, instanceId, maintenance, selfCheck };
 }
 

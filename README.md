@@ -164,7 +164,7 @@ npm test
 npm audit --omit=dev
 ```
 
-테스트는 운영 데이터와 분리한 임시 DB를 사용합니다. GitHub Actions에서도 같은 검사를 실행합니다. 업데이트는 백업 → 서버 중지 → `git pull --ff-only` → `npm ci` → 검사 → 재시작 순서입니다.
+테스트는 운영 데이터와 분리한 임시 DB를 사용합니다. 같은 검사를 포털 PC가 코드가 바뀔 때마다 자동으로 실행해 **운영관리 → 점검 로그**에 남깁니다(GitHub Actions 워크플로는 GitHub 화면에서 사용 안 함으로 설정). 업데이트는 백업 → 서버 중지 → `git pull --ff-only` → `npm ci` → 검사 → 재시작 순서입니다.
 
 `.env`, `data/`, `backups/`, `work/`, `node_modules/`는 Git에서 제외됩니다. 자료와 계정은 GitHub에 전송하지 않습니다. 일반/다크 모드만 브라우저 localStorage에 저장하고 나머지 업무자료는 서버 DB에 보관합니다.
 

@@ -113,6 +113,7 @@ const timer = setInterval(() => {
     portal.tick();
     portal.pruneBackups();
     databaseCheck();
+    portal.selfCheck?.runIfCodeChanged();
   } catch (error) { console.error('Periodic portal task failed', error); databaseCheck(error); }
   autoBackup().catch(error => console.error('Automatic backup failed', error));
 }, 60000);

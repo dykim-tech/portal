@@ -51,6 +51,28 @@ export function createManagement({api,esc,state,canEdit,openDialog,input,toast,f
   const disabled=canEdit()?'':'disabled';
   openDialog(id?'프로젝트 상세':'프로젝트 등록',`<form id="project-form"><div class="form-grid">${input('name','프로젝트명 *',row.name,`required maxlength="150" ${disabled}`)}<label>유형<select name="kind" ${disabled}>${choices(Object.keys(kindLabels),row.kind,kindLabels)}</select></label><label>단계<select name="phase" ${disabled}>${choices(Object.keys(phaseLabels),row.phase,phaseLabels)}</select></label><label>상태<select name="status" ${disabled}>${choices(Object.keys(statusLabels),row.status,statusLabels)}</select></label>${input('customer','고객사',row.customer,`maxlength="150" ${disabled}`)}${input('owner','담당자',row.owner,`maxlength="150" ${disabled}`)}${input('location','위치',row.location,`maxlength="200" ${disabled}`)}<label>연결할 설치 정보<select name="installation_id" ${disabled}><option value="">연결 안 함</option>${selectedMissing?`<option value="${row.installation_id}" selected>기존 연결 #${row.installation_id}</option>`:''}${installationChoices}</select></label>${input('planned_start','예정 시작일',dateValue(row.planned_start),`type="date" ${disabled}`)}${input('planned_end','예정 종료일',dateValue(row.planned_end),`type="date" ${disabled}`)}${input('actual_start','실제 시작일',dateValue(row.actual_start),`type="date" ${disabled}`)}${input('actual_end','실제 종료일',dateValue(row.actual_end),`type="date" ${disabled}`)}<label class="full">메모<textarea name="notes" maxlength="10000" ${disabled}>${esc(row.notes)}</textarea></label></div>${canEdit()?`<div class="form-actions"><button type="button" data-action="close">취소</button>${id?`<button type="button" class="danger" data-action="project-delete" data-id="${row.id}">삭제</button>`:''}<button class="primary">저장</button></div>`:''}</form>${id?`<section class="subsection"><h3>단계별 할 일</h3>${Object.keys(phaseLabels).map(phase=>`<div class="project-phase"><strong>${phaseLabels[phase]}</strong>${data.tasks.filter(task=>task.phase===phase).map(task=>`<div class="project-task"><span class="project-task-title">${canEdit()?`<input type="checkbox" data-action="project-task-toggle" data-id="${task.id}" ${task.done_at?'checked':''} aria-label="${esc(task.title)} 완료">`:task.done_at?'✓ ':'○ '}${esc(task.title)}${task.due_date?` <small>(${task.due_date})</small>`:''}</span>${canEdit()?`<button class="small danger" data-action="project-task-delete" data-id="${task.id}">삭제</button>`:''}</div>`).join('')||'<p class="muted">등록된 할 일이 없습니다.</p>'}</div>`).join('')}${canEdit()?`<form id="project-task-form" class="project-task-form"><label>단계<select name="phase">${choices(Object.keys(phaseLabels),row.phase,phaseLabels)}</select></label>${input('title','할 일 *','','required maxlength="200"')}${input('due_date','예정일','','type="date"')}<button class="primary">추가</button></form>`:''}</section>`:'<p class="save-note">프로젝트를 먼저 저장하면 단계별 할 일을 관리할 수 있습니다.</p>'}`);
  }
+ // 점검 로그: GitHub Actions 메일 대신 이 PC에서 실행한 문법 검사·자동 테스트·보안 점검 결과를 보여 준다.
+ const checkLabels={ok:'정상',fail:'실패',skip:'확인 불가',running:'점검 중'};
+ const checkBadge=status=>`<span class="check-status ${esc(status)}">${checkLabels[status]??esc(status)}</span>`;
+ const seconds=ms=>ms>=60000?`${Math.floor(ms/60000)}분 ${Math.round(ms%60000/1000)}초`:`${(ms/1000).toFixed(1)}초`;
+ let checkTimer=null;
+ async function renderChecks(){
+  clearTimeout(checkTimer);
+  const panel=document.querySelector('#self-check-panel');if(!panel)return;
+  const checks=await api('/operations/checks');if(!panel.isConnected)return;
+  projectState.checks=checks.logs;
+  const running=checks.running;
+  const stepCell=(row,key)=>{const step=row.steps?.find(item=>item.key===key);return step?`${checkBadge(step.status)}<small class="check-summary">${esc(step.summary)}</small>`:'—';};
+  panel.innerHTML=`<div class="panel-head"><h2>점검 로그</h2><button class="primary" data-action="self-check-run" ${running?'disabled':''}>${running?'점검 중…':'지금 점검'}</button></div>
+   <p class="help-line check-help">코드가 바뀌면(새 커밋) 1분 안에 문법 검사·자동 테스트·보안 점검을 자동으로 실행하고 결과를 여기에 남깁니다(최근 50회). GitHub 메일 알림은 쓰지 않습니다.</p>
+   ${running?`<p class="check-running">${checkBadge('running')} ${esc(running.step||'준비 중')} · ${esc(fmt(running.started_at))} 시작 · 코드 ${esc(running.commit??'-')}</p>`:''}
+   ${checks.logs.length?`<div class="table-wrap"><table class="check-table"><thead><tr><th>시각</th><th>계기</th><th>코드</th><th>결과</th><th>문법 검사</th><th>자동 테스트</th><th>보안 점검</th><th>소요</th></tr></thead><tbody>${checks.logs.map((row,index)=>`<tr><td>${esc(fmt(row.started_at))}</td><td>${esc(row.trigger)}</td><td><code>${esc(row.commit??'-')}</code></td><td>${checkBadge(row.status)} <button class="small" data-action="self-check-detail" data-id="${index}">자세히</button></td><td>${stepCell(row,'syntax')}</td><td>${stepCell(row,'test')}</td><td>${stepCell(row,'audit')}</td><td>${row.finished_at?seconds(Date.parse(row.finished_at)-Date.parse(row.started_at)):'—'}</td></tr>`).join('')}</tbody></table></div>`:'<div class="empty"><h3>아직 점검 기록이 없습니다</h3><p>지금 점검을 누르거나 코드가 바뀌면 기록됩니다.</p></div>'}`;
+  if(running)checkTimer=setTimeout(()=>{if(state.view==='operations')renderChecks().catch(()=>{});},3000);
+ }
+ function checkDetail(index){
+  const row=projectState.checks?.[Number(index)];if(!row)return;
+  openDialog('점검 결과',`<p>${esc(fmt(row.started_at))} · ${esc(row.trigger)} · 코드 <code>${esc(row.commit??'-')}</code> · Node ${esc(row.node??'')} · ${checkBadge(row.status)}</p>${(row.steps??[]).map(step=>`<section class="check-step"><h3>${checkBadge(step.status)} ${esc(step.name)} <small>${esc(step.summary)} · ${seconds(step.ms??0)}</small></h3>${step.output?`<pre class="check-output">${esc(step.output)}</pre>`:''}</section>`).join('')}<div class="form-actions"><button type="button" data-action="close">닫기</button></div>`);
+ }
  async function renderOperations(){
   const data=await api('/operations');if(state.view!=='operations')return;
   projectState.documents=data.documents;
@@ -58,7 +80,9 @@ export function createManagement({api,esc,state,canEdit,openDialog,input,toast,f
   document.querySelector('#content').innerHTML=pageHead('PORTAL OPERATIONS','운영관리','서버 상태와 포털 설계·화면 디자인을 확인하세요.')+
    `<div class="project-stats">${[['서버','정상'],['설치 정보',data.counts.installations+'건'],['프로젝트',data.counts.projects+'건'],['업무일지',data.counts.work_logs+'건']].map(([label,value])=>`<div class="project-stat"><small>${label}</small><strong>${value}</strong></div>`).join('')}</div>
    <section class="panel operations-panel"><div class="panel-head"><h2>운영 상태</h2><button data-view="backups">백업/복구</button></div><div class="operations-status"><p>서버 시작: ${fmt(data.started_at)}</p><p>가동 시간: ${Math.floor(data.uptime_seconds/3600)}시간 ${Math.floor(data.uptime_seconds%3600/60)}분</p><p>활성 사용자: ${data.counts.users}명 · 등록 자료: ${data.counts.manuals}건</p></div></section>
+   <section class="panel operations-panel" id="self-check-panel"></section>
    <section class="panel operations-panel"><div class="panel-head"><h2>설계도 · 디자인 · 운영자 매뉴얼</h2>${selected.pdf?`<a class="button-link primary" href="${esc(selected.pdf)}" download="DYKIM-PORTAL-Operator-Manual.pdf">PDF 다운로드</a>`:''}</div><div class="document-tabs">${data.documents.map((doc,index)=>`<button data-action="operations-document" data-id="${index}" class="${index===projectState.document?'active':''}" aria-pressed="${index===projectState.document}">${esc(doc.title)}</button>`).join('')}</div><article class="operations-document" id="operations-document">${documentHtml(selected.content)}</article></section>`;
+   await renderChecks();
  }
  // 사용량 관리(관리자 전용): 로컬 드라이브 공간과 포털 데이터·첨부 사용량
  const bytes=value=>{const n=Number(value)||0;if(n>=1024**4)return (n/1024**4).toFixed(2)+' TB';if(n>=1024**3)return (n/1024**3).toFixed(2)+' GB';if(n>=1024**2)return (n/1024**2).toFixed(1)+' MB';if(n>=1024)return (n/1024).toFixed(1)+' KB';return n+' B';};
@@ -82,6 +106,8 @@ export function createManagement({api,esc,state,canEdit,openDialog,input,toast,f
    case 'project-task-delete':if(confirm('이 할 일을 삭제할까요?')){await api('/project-tasks/'+id,{method:'DELETE'});await projectDialog(projectState.selected.id);await renderProjects();toast('할 일을 삭제했습니다.');}return true;
    case 'usage-refresh':await renderUsage();toast('사용량을 새로 확인했습니다.');return true;
    case 'operations-document':projectState.document=Number(id);await renderOperations();return true;
+   case 'self-check-run':{const result=await api('/operations/checks',{method:'POST',body:{}});toast(result.running?.started_at?'점검을 시작했습니다. 1분 정도 걸립니다.':'점검을 시작하지 못했습니다.');await renderChecks();return true;}
+   case 'self-check-detail':checkDetail(id);return true;
    default:return false;
   }
  }
