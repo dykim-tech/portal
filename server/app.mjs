@@ -17,6 +17,7 @@ import { registerBackups, recoverInterruptedRestore } from './backups.mjs';
 import { initializeActivity, recordMutation, scanMissing, scanMonthly, activityForUser, activityUnread, readActivity } from './activity.mjs';
 import { initializeProjects, registerProjects } from './projects.mjs';
 import { registerOperations } from './operations.mjs';
+import { registerLeave } from './leave.mjs';
 import { createSelfCheck } from './self-check.mjs';
 import { registerUsage } from './usage.mjs';
 import { initializeTodos, registerTodos } from './todos.mjs';
@@ -311,6 +312,7 @@ export function createPortal(options = {}) {
   const selfCheck = options.selfCheck === false ? null : createSelfCheck({ dataDir });
   registerOperations(app, { db, requireRole, instanceId, selfCheck });
   registerUsage(app, { db, requireRole, dataDir, backupDir });
+  registerLeave(app, { db, requireRole });
   purgeOrphanChunks(db);
   registerReports(app, { db });
   const pruneBackups = registerBackups(app, { db, backupDir, requireRole, maintenance, onRestore: options.onRestore });
