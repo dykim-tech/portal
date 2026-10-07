@@ -673,7 +673,8 @@ document.addEventListener('click',async event=>{
     const action=button.dataset.action,id=button.dataset.id;if(!action)return;
     if(action==='view-back'){await navigateBack();return;}
     if(action==='sidebar-toggle'){toggleSidebar();return;}
-    if(action==='leave-refresh'){const panel=button.closest('.dashboard-leave');button.disabled=true;try{const l=await api('/leave?refresh=1');if(panel?.isConnected)panel.innerHTML=leavePanel(l);}finally{if(button.isConnected)button.disabled=false;}return;}
+    if(action==='leave-toggle'){const panel=button.closest('.dashboard-leave'),detail=panel?.querySelector('.leave-detail');if(!detail)return;const open=detail.hidden;detail.hidden=!open;button.setAttribute('aria-expanded',String(open));button.textContent=open?'세부 내용 접기 ▴':'세부 내용 보기 ▾';return;}
+    if(action==='leave-refresh'){const panel=button.closest('.dashboard-leave'),open=panel?.querySelector('.leave-detail')?.hidden===false;button.disabled=true;try{const l=await api('/leave?refresh=1');if(panel?.isConnected)panel.innerHTML=leavePanel(l,open);}finally{if(button.isConnected)button.disabled=false;}return;}
     if(action==='leave-settings'){const s=await api('/leave/settings');openDialog('휴가 현황 연동',`<form id="leave-settings-form" class="form-grid"><div class="full">${input('file','휴가 엑셀 파일 경로 (.xlsx/.xlsm)',s.file,'maxlength="500"')}</div><div class="full">${input('employee','대시보드에 표시할 사원명',s.employee,'maxlength="50"')}</div><p class="help-line full">포털 서버가 이 파일을 읽기만 합니다(수정하지 않음). 두 칸을 모두 비우고 저장하면 대시보드에서 휴가 현황을 숨깁니다.</p><div class="form-actions full"><button type="button" data-action="close">취소</button><button class="primary" type="submit">저장</button></div></form>`);return;}
     if(action==='menu-reset'){if(state.view!=='settings')return;sidebarMenuOrder=sidebarMenus.map(([view])=>view);saveSidebarMenu();renderSidebarMenu();renderSettingsMenu();document.querySelector('[data-action="menu-reset"]')?.focus();return;}
     if(action==='menu-up'||action==='menu-down'){
@@ -776,13 +777,14 @@ async function renderDashboard(){
  if(leave?.configured){const panel=document.createElement('section');panel.className='panel dashboard-leave';panel.innerHTML=leavePanel(leave);(document.querySelector('#content .dashboard-usage')??document.querySelector('#content .stats'))?.after(panel);}
 }
 function leaveNumber(n){return n===null||n===undefined?'—':String(Math.round(n*100)/100);}
-function leavePanel(l){
- const head=`<div class="panel-head"><h2>휴가 현황 · ${esc(l.employee)}${l.year?` <small>${esc(String(l.year))}년도</small>`:''}</h2><button class="small" data-action="leave-refresh">새로 읽기</button></div>`;
- if(l.error)return head+`<div class="leave-body"><p class="error-text">${esc(l.error)}</p><p class="leave-source">파일: ${esc(l.file_name??'')}</p></div>`;
+function leavePanel(l,open=false){
+ const head=`<div class="panel-head"><h2>휴가 현황 · ${esc(l.employee)}${l.year?` <small>${esc(String(l.year))}년도</small>`:''}</h2><div class="leave-actions">${l.error?'':`<button class="small" data-action="leave-toggle" aria-expanded="${open}" aria-controls="leave-detail">${open?'세부 내용 접기 ▴':'세부 내용 보기 ▾'}</button>`}<button class="small" data-action="leave-refresh">새로 읽기</button></div></div>`;
+ if(l.error)return head+`<div class="dashboard-usage-body leave-summary"><p class="error-text">${esc(l.error)}</p><p class="leave-source">파일: ${esc(l.file_name??'')}</p></div>`;
+ // 접은 상태: 저장소 사용량과 같은 크기(왼쪽 기본 정보, 오른쪽 숫자 4개). 펼치면 월별 현황·사용 기록을 아래에 보여 준다.
  const figures=[['연간 연차수',l.annual_days,''],['Today기준연차수',l.today_days,'leave-today'],['사용일수',l.used_days,'leave-used'],['잔여일수',l.remaining_days,'leave-remaining']];
  const months=l.months.map(m=>`<div class="leave-month ${m.days?'used':''}"><span>${esc(m.label)}</span><strong>${m.days?leaveNumber(m.days):''}</strong></div>`).join('');
  const records=l.records.length?`<table class="leave-records"><thead><tr><th>휴가구분</th><th>휴가기간</th><th>사용일수</th><th>휴가사유</th></tr></thead><tbody>${l.records.map(r=>`<tr><td><span class="badge">${esc(r.type||'—')}</span></td><td>${esc(r.start??'')}${r.end&&r.end!==r.start?' ~ '+esc(r.end):''}</td><td>${leaveNumber(r.days)}</td><td>${esc([r.reason,r.note].filter(Boolean).join(' · ')||'—')}</td></tr>`).join('')}</tbody></table>`:'<p class="muted leave-empty">등록된 휴가 사용 기록이 없습니다.</p>';
- return head+`<div class="leave-body"><p class="leave-profile">${esc([l.department,l.position].filter(Boolean).join(' · '))}${l.hire_date?` · 입사일 ${esc(l.hire_date)}`:''}${l.period?` · 연차 적용 기간 ${esc(l.period)}`:''}</p><dl class="leave-figures">${figures.map(([name,n,cls])=>`<div class="${cls}"><dt>${name}</dt><dd>${leaveNumber(n)}</dd></div>`).join('')}</dl><div class="leave-months" aria-label="월별 휴가 사용 현황">${months}</div><div class="table-wrap">${records}</div><p class="leave-source">${esc(l.file_name)} · 엑셀 저장 ${esc(fmt(l.saved_at))}</p></div>`;
+ return head+`<div class="dashboard-usage-body leave-summary"><div class="leave-profile"><strong>${esc([l.department,l.position].filter(Boolean).join(' · '))}</strong><span>${l.hire_date?`입사일 ${esc(l.hire_date)}`:''}${l.period?` · 연차 적용 기간 ${esc(l.period)}`:''}</span></div><dl class="dashboard-usage-figures leave-figures">${figures.map(([name,n,cls])=>`<div class="${cls}"><dt>${name}</dt><dd>${leaveNumber(n)}</dd></div>`).join('')}</dl></div><div class="leave-detail" id="leave-detail" ${open?'':'hidden'}><div class="leave-months" aria-label="월별 휴가 사용 현황">${months}</div><div class="table-wrap">${records}</div><p class="leave-source">${esc(l.file_name)} · 엑셀 저장 ${esc(fmt(l.saved_at))}</p></div>`;
 }
 async function renderInstallations(){
   const d=await api('/installations?'+new URLSearchParams({...features.installationFilters,...listingQuery('installations',features.installationPage)}));
