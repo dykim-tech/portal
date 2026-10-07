@@ -99,7 +99,7 @@ function authPage(setup){
   else {emailField.closest('label').outerHTML=loginField;root.querySelector('.auth-note').textContent='기존 계정은 이전 이메일의 @ 앞부분을 아이디로 입력하세요. 아이디가 겹치면 관리자에게 확인해 주세요.';}
 }
 function shell(){
-  const menus=[['dashboard','대시보드'],['installations','설치관리'],['projects','프로젝트 관리'],['library','자료 관리'],['items','자산 관리'],['todos','TO-DO List'],['work','업무관리'],['reports','리포트'],['tools','도구'],['outlook','Mail'],['settings','설정']];
+  const menus=[['dashboard','대시보드'],['installations','설치관리'],['projects','프로젝트 관리'],['library','자료 관리'],['items','자산 관리'],['todos','TO-DO List'],['work','업무관리'],['reports','리포트'],['tools','도구'],['outlook','Mail'],['gracecns','GRACECNS'],['settings','설정']];
   sidebarMenus=menus;
   const defaults=sidebarMenus.map(([view])=>view);
   let local=null;try{local=JSON.parse(localStorage.getItem(sidebarMenuKey()));}catch{}
@@ -666,6 +666,8 @@ document.addEventListener('click',async event=>{
   try{
     if(bulkMode?.deleting){toast('선택한 항목을 삭제하는 중입니다. 잠시 기다려 주세요.');return;}
     if(button.dataset.view==='outlook'){launchOutlook();return;}
+    // GRACECNS 메뉴: 회사 홈페이지를 새 탭에서 바로 연다(포털 화면은 그대로).
+    if(button.dataset.view==='gracecns'){window.open('http://gracecns.com/','_blank','noopener,noreferrer');return;}
     if(button.dataset.view){await navigateTo(button.dataset.view);return;}
     if(button.dataset.tableSort){const kind=button.dataset.tableSort,key=button.dataset.sort,config=tableState[kind];if(!tableColumns[kind]?.includes(key))return;config.direction=config.sort===key?(config.direction==='asc'?'desc':'asc'):['updated_at','created_at','work_date','installed_on','completed_on','due_date'].includes(key)?'desc':'asc';config.sort=key;resetListingPage(kind);await renderView();return;}
     const action=button.dataset.action,id=button.dataset.id;if(!action)return;
