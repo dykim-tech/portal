@@ -458,7 +458,11 @@ document.addEventListener('contextmenu',event=>{extras.todoContextMenu(event).ca
 document.addEventListener('input',event=>{extras.todoInput(event.target);});
 document.addEventListener('focusout',event=>{extras.todoBlur(event.target).catch(error=>toast(error.message));});
 let activeTodoSizeCard=null;
-document.addEventListener('pointerdown',event=>{activeTodoSizeCard=event.target.closest?.('.todo-note')??null;});
+document.addEventListener('pointerdown',event=>{if(state.view==='todos'&&extras.todoDragStart(event)){activeTodoSizeCard=null;return;}activeTodoSizeCard=event.target.closest?.('.todo-note')??null;});
+document.addEventListener('pointermove',event=>{extras.todoDragMove(event);});
+document.addEventListener('pointercancel',event=>{extras.todoDragEnd(event).catch(error=>toast(error.message));});
+document.addEventListener('pointerup',event=>{extras.todoDragEnd(event).catch(error=>toast(error.message));});
+let todoResizeTimer=null;window.addEventListener('resize',()=>{if(state.view!=='todos')return;clearTimeout(todoResizeTimer);todoResizeTimer=setTimeout(()=>extras.layoutTodoBoard(),150);});
 document.addEventListener('pointerup',()=>{if(activeTodoSizeCard){extras.rememberTodoSize(activeTodoSizeCard);activeTodoSizeCard=null;}});
 function fileDropTarget(event){
   if(!event.dataTransfer?.types?.includes('Files')||modal.open)return null;
@@ -757,7 +761,7 @@ async function renderDashboard(){
  const workPanel=document.querySelector('#content .dashboard-grid .panel');
  if(workPanel)workPanel.innerHTML=`<div class="panel-head"><h2>최근 일주일 업무관리</h2><button class="small" data-view="work">업무관리 보기</button></div>${d.recentWork.length?d.recentWork.map(row=>`<div class="dashboard-row"><button class="link-button" data-action="dashboard-work" data-id="${row.id}">${esc(row.title)}<span class="secondary-line">${esc(row.customer_name)} · ${esc(row.work_date)}</span></button><span class="badge">${esc(row.status)}</span></div>`).join(''):'<div class="empty"><h3>최근 일주일 업무일지가 없습니다</h3><p>업무관리에서 고객별 업무 내용을 기록해 보세요.</p></div>'}`;
  // 오늘의 할 일(로그인 사용자의 미완료 메모)과 최근 프로젝트 3건
- const memo=row=>{const text=[row.title,row.body].filter(Boolean).join(' ').replace(/\s+/g,' ').trim()||'내용 없는 메모';return text.length>80?text.slice(0,80)+'…':text;};
+ const memo=row=>{if(row.locked)return '🔒 잠긴 메모';const text=[row.title,row.body].filter(Boolean).join(' ').replace(/\s+/g,' ').trim()||'내용 없는 메모';return text.length>80?text.slice(0,80)+'…':text;};
  const projectPhase={before:'설치 전',during:'설치 중',after:'설치 후'},projectStatus={planned:'예정',in_progress:'진행 중',on_hold:'보류',completed:'완료'},projectKind={installation:'설치',other:'기타'};
  const extra=document.createElement('div');extra.className='dashboard-grid dashboard-extra';
  extra.innerHTML=`<section class="panel"><div class="panel-head"><h2>오늘의 할 일 · 미완료 ${d.openTodoCount}건</h2><button class="small" data-view="todos">TO-DO List</button></div>${d.openTodos.length?d.openTodos.map(row=>`<div class="dashboard-row"><button class="link-button dashboard-todo" data-view="todos" title="${esc(memo(row))}">${esc(memo(row))}<span class="secondary-line">${esc(row.target_date)}</span></button><span class="badge ${row.target_date<d.today?'overdue':row.target_date===d.today?'today':'upcoming'}">${row.target_date<d.today?'지난 날짜':row.target_date===d.today?'오늘':'예정'}</span></div>`).join('')+(d.openTodoCount>d.openTodos.length?`<div class="dashboard-row dashboard-more"><button class="link-button" data-view="todos">외 ${d.openTodoCount-d.openTodos.length}건 더 보기</button></div>`:''):'<div class="empty"><h3>완료하지 않은 할 일이 없습니다</h3><p>TO-DO List에서 오늘의 할 일을 메모해 보세요.</p></div>'}</section><section class="panel"><div class="panel-head"><h2>최근 프로젝트</h2><button class="small" data-view="projects">프로젝트 관리</button></div>${d.recentProjects.length?d.recentProjects.map(row=>`<div class="dashboard-row"><button class="link-button" data-action="project-open" data-id="${row.id}">${esc(row.name)}<span class="secondary-line">${esc(row.customer||'고객사 미지정')} · ${projectKind[row.kind]??''} · ${esc(row.planned_start||'—')} ~ ${esc(row.planned_end||'—')}</span></button><span class="badge ${row.status}">${projectPhase[row.phase]??''} · ${projectStatus[row.status]??''}</span></div>`).join(''):'<div class="empty"><h3>등록된 프로젝트가 없습니다</h3><p>프로젝트 관리에서 설치·기타 프로젝트를 등록해 보세요.</p></div>'}</section>`;

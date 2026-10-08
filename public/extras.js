@@ -5,8 +5,59 @@ export function createExtras(ctx) {
   const todo = { items: [], today: '', todayOpen: 0 };
   const todoSaves = new WeakMap();
   const todoSizeKey=id=>`portal-todo-size-${state.user.id}-${id}`;
-  function todoSize(id){try{const value=JSON.parse(localStorage.getItem(todoSizeKey(id)));if(value&&value.width>=250&&value.width<=900&&value.height>=205&&value.height<=900)return `style="width:${value.width}px;height:${value.height}px"`;}catch{}return '';}
-  function rememberTodoSize(card){const {width,height}=card.getBoundingClientRect();try{localStorage.setItem(todoSizeKey(card.dataset.todoId),JSON.stringify({width:Math.round(width),height:Math.round(height)}));}catch{}}
+  // 메모 크기는 이 브라우저에 기억한다. 보안 정책(CSP)상 style 속성 대신 스크립트로 적용한다.
+  function todoSize(id){try{const value=JSON.parse(localStorage.getItem(todoSizeKey(id)));if(value&&value.width>=250&&value.width<=900&&value.height>=205&&value.height<=900)return value;}catch{}return null;}
+  function rememberTodoSize(card){if(!card.isConnected)return;const {width,height}=card.getBoundingClientRect();try{localStorage.setItem(todoSizeKey(card.dataset.todoId),JSON.stringify({width:Math.round(width),height:Math.round(height)}));}catch{}fitTodoBoard();}
+  const lockIcon='<svg viewBox="0 0 20 20" width="14" height="14" aria-hidden="true" focusable="false"><rect x="4" y="9" width="12" height="8.5" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M6.8 9V6.6a3.2 3.2 0 0 1 6.4 0V9" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>';
+  // ---- 메모 자유 배치: 메모 보드 안에서 끌어 원하는 위치에 놓는다(위치는 서버에 저장). 좁은 화면에서는 세로로 쌓는다.
+  const TODO_GAP=15;let todoTop=10,todoDrag=null;
+  const freeBoard=()=>!matchMedia('(max-width:720px)').matches;
+  function fitTodoBoard(){const grid=document.querySelector('#todo-grid');if(!grid?.classList.contains('free'))return;let bottom=0;for(const card of grid.querySelectorAll('.todo-note'))bottom=Math.max(bottom,card.offsetTop+card.offsetHeight);grid.style.height=Math.max(320,bottom+40)+'px';}
+  function layoutTodoBoard(){
+    const grid=document.querySelector('#todo-grid');if(!grid)return;
+    const cards=[...grid.querySelectorAll('.todo-note')];
+    if(!freeBoard()){grid.classList.remove('free');grid.style.height='';for(const card of cards){card.style.left='';card.style.top='';card.style.width='';card.style.height='';}return;}
+    for(const card of cards){const size=todoSize(card.dataset.todoId);if(size){card.style.width=size.width+'px';card.style.height=size.height+'px';}}
+    grid.classList.add('free');
+    const width=Math.max(grid.clientWidth,300),placed=[],free=[];
+    const overlaps=(x,y,w,h)=>placed.some(r=>x<r.x+r.w+TODO_GAP&&x+w+TODO_GAP>r.x&&y<r.y+r.h+TODO_GAP&&y+h+TODO_GAP>r.y);
+    for(const card of cards){const row=todo.items.find(item=>item.id===Number(card.dataset.todoId));if(row&&row.pos_x!==null&&row.pos_x!==undefined&&row.pos_y!==null&&row.pos_y!==undefined){card.style.left=row.pos_x+'px';card.style.top=row.pos_y+'px';placed.push({x:row.pos_x,y:row.pos_y,w:card.offsetWidth,h:card.offsetHeight});}else free.push(card);}
+    // 위치를 정한 적 없는 메모는 왼쪽 위부터 빈 자리에 차례로 놓는다.
+    for(const card of free){const w=card.offsetWidth,h=card.offsetHeight;let spot=null;for(let y=0;!spot&&y<20000;y+=20)for(let x=0;x+w<=width||x===0;x+=20){if(!overlaps(x,y,w,h)){spot={x,y};break;}if(x+w>width)break;}spot??={x:0,y:0};card.style.left=spot.x+'px';card.style.top=spot.y+'px';placed.push({...spot,w,h});}
+    fitTodoBoard();
+  }
+  function todoDragStart(event){
+    if(event.button!==0||!freeBoard())return false;
+    const card=event.target.closest?.('#todo-grid.free .todo-note');if(!card)return false;
+    if(card.style.zIndex!==String(todoTop))card.style.zIndex=String(++todoTop); // 누른 메모를 맨 앞으로
+    if(event.target.closest('input,textarea,button,a,label,select,.note-files'))return false;
+    const box=card.getBoundingClientRect();
+    if(event.target===card&&event.clientX>box.right-20&&event.clientY>box.bottom-20)return false; // 오른쪽 아래 크기 조절 손잡이
+    if(!event.target.closest('.todo-note-top,.todo-note-bottom,.todo-locked')&&event.target!==card)return false;
+    event.preventDefault();
+    todoDrag={card,id:Number(card.dataset.todoId),startX:event.clientX,startY:event.clientY,left:card.offsetLeft,top:card.offsetTop,moved:false,pointer:event.pointerId};
+    card.classList.add('dragging');card.setPointerCapture?.(event.pointerId);
+    return true;
+  }
+  function todoDragMove(event){
+    if(!todoDrag||event.pointerId!==todoDrag.pointer)return false;
+    const {card}=todoDrag,grid=card.parentElement,dx=event.clientX-todoDrag.startX,dy=event.clientY-todoDrag.startY;
+    if(!todoDrag.moved&&Math.abs(dx)+Math.abs(dy)<4)return true;
+    todoDrag.moved=true;
+    const x=Math.min(Math.max(0,todoDrag.left+dx),Math.max(0,grid.clientWidth-card.offsetWidth)),y=Math.max(0,todoDrag.top+dy);
+    card.style.left=Math.round(x)+'px';card.style.top=Math.round(y)+'px';
+    if(card.offsetTop+card.offsetHeight+40>grid.offsetHeight)grid.style.height=(card.offsetTop+card.offsetHeight+40)+'px';
+    return true;
+  }
+  async function todoDragEnd(event){
+    if(!todoDrag||event.pointerId!==todoDrag.pointer)return false;
+    const {card,id,moved}=todoDrag;todoDrag=null;card.classList.remove('dragging');
+    if(!moved)return true;
+    const x=card.offsetLeft,y=card.offsetTop,row=todo.items.find(item=>item.id===id);
+    await api(`/todos/${id}/position`,{method:'PUT',body:{x,y}});
+    if(row){row.pos_x=x;row.pos_y=y;}
+    fitTodoBoard();return true;
+  }
   const report = { from: '', to: '' };
   const levelNames = ['대분류', '중분류', '소분류'];
   const workStatus = { planned: '예정', progress: '진행 중', done: '완료', hold: '보류' };
@@ -63,16 +114,18 @@ export function createExtras(ctx) {
   }
   function todoCard(row){
     const memo=[row.title,row.body].filter(Boolean).join('\n');
-    return `<article class="todo-note ${row.done?'completed':''}" data-todo-id="${row.id}" ${todoSize(row.id)}><div class="todo-note-top"><label class="todo-check"><input type="checkbox" data-todo-toggle="${row.id}" ${row.done?'checked':''}><span>${row.done?'완료':'할 일'}</span></label><input type="date" class="todo-note-date" data-todo-field="target_date" aria-label="메모 날짜" value="${esc(row.target_date)}"></div><textarea class="todo-note-body" data-todo-field="body" aria-label="메모 내용" placeholder="여기에 바로 메모하세요" maxlength="6000">${esc(memo)}</textarea><div class="note-files">${(row.files??[]).map(file=>`<div><a href="/api/todo-files/${file.id}/download">${esc(file.name)}</a><button type="button" class="small danger" data-action="todo-file-delete" data-id="${file.id}" aria-label="${esc(file.name)} 삭제">×</button></div>`).join('')}</div><div class="todo-note-bottom"><small class="todo-save-status" aria-live="polite">자동 저장 · 파일을 끌어 놓아 첨부</small><button type="button" class="danger" data-action="todo-delete" data-id="${row.id}">삭제</button></div></article>`;
+    if(row.locked)return `<article class="todo-note locked ${row.done?'completed':''}" data-todo-id="${row.id}"><div class="todo-note-top"><label class="todo-check"><input type="checkbox" data-todo-toggle="${row.id}" ${row.done?'checked':''}><span>${row.done?'완료':'할 일'}</span></label><span class="todo-note-date">${esc(row.target_date)}</span></div><div class="todo-locked" title="비밀번호를 입력하면 잠금이 풀리고 내용이 보입니다."><span class="todo-lock-badge">${lockIcon}</span><strong>잠긴 메모</strong></div><div class="todo-note-bottom"><small class="todo-save-status">잠김</small><span class="todo-note-actions"><button type="button" class="todo-lock-button" data-action="todo-unlock" data-id="${row.id}">${lockIcon}잠금 해제</button><button type="button" class="danger" data-action="todo-delete" data-id="${row.id}">삭제</button></span></div></article>`;
+    return `<article class="todo-note ${row.done?'completed':''}" data-todo-id="${row.id}"><div class="todo-note-top"><label class="todo-check"><input type="checkbox" data-todo-toggle="${row.id}" ${row.done?'checked':''}><span>${row.done?'완료':'할 일'}</span></label><input type="date" class="todo-note-date" data-todo-field="target_date" aria-label="메모 날짜" value="${esc(row.target_date)}"></div><textarea class="todo-note-body" data-todo-field="body" aria-label="메모 내용" placeholder="여기에 바로 메모하세요" maxlength="6000">${esc(memo)}</textarea><div class="note-files">${(row.files??[]).map(file=>`<div><a href="/api/todo-files/${file.id}/download">${esc(file.name)}</a><button type="button" class="small danger" data-action="todo-file-delete" data-id="${file.id}" aria-label="${esc(file.name)} 삭제">×</button></div>`).join('')}</div><div class="todo-note-bottom"><small class="todo-save-status" aria-live="polite" title="자동 저장 · 파일을 끌어 놓아 첨부">자동 저장 · 파일을 끌어 놓아 첨부</small><span class="todo-note-actions"><button type="button" class="todo-lock-button" data-action="todo-lock" data-id="${row.id}" title="메모 잠금" aria-label="메모 잠금">${lockIcon}잠금</button><button type="button" class="danger" data-action="todo-delete" data-id="${row.id}">삭제</button></span></div></article>`;
   }
   const todoMemo=row=>[row.title,row.body].filter(Boolean).join('\n');
   function doneNote(row,index){
-    const memo=todoMemo(row),preview=memo.trim().slice(0,74);
+    const memo=row.locked?'🔒 잠긴 메모':todoMemo(row),preview=memo.trim().slice(0,74);
     return `<button type="button" class="done-note done-note-${index%4}" data-action="todo-open-done" data-id="${row.id}" aria-label="완료한 메모 열기: ${esc(preview||'내용 없음')}"><span class="done-note-pin" aria-hidden="true"></span><span class="done-note-date">${esc(row.target_date)}</span><span class="done-note-text">${esc(preview||'내용 없는 메모')}</span>${(row.files??[]).length?`<span class="done-note-files">첨부 ${(row.files??[]).length}개</span>`:''}</button>`;
   }
   function openDoneNote(id){
     const row=todo.items.find(item=>item.id===Number(id)&&item.done);
     if(!row)throw new Error('완료한 메모를 찾을 수 없습니다.');
+    if(row.locked){openDialog('완료한 메모',`<div class="todo-expanded"><div class="todo-expanded-date">${esc(row.target_date)} · 완료 · 잠김</div><div class="todo-expanded-text todo-expanded-locked">${lockIcon} 잠긴 메모입니다. 잠금을 해제하면 내용이 보입니다.</div><div class="form-actions"><button type="button" data-action="todo-unlock" data-id="${row.id}">잠금 해제</button><button type="button" data-action="todo-restore" data-id="${row.id}">다시 할 일로</button><button type="button" class="danger" data-action="todo-delete" data-id="${row.id}">삭제</button></div></div>`);return;}
     const files=(row.files??[]).map(file=>`<a href="/api/todo-files/${file.id}/download">${esc(file.name)}</a>`).join('');
     openDialog('완료한 메모',`<div class="todo-expanded"><div class="todo-expanded-date">${esc(row.target_date)} · 완료</div><div class="todo-expanded-text">${esc(todoMemo(row))||'내용 없는 메모'}</div>${files?`<div class="todo-expanded-files"><strong>첨부파일</strong>${files}</div>`:''}<div class="form-actions"><button type="button" data-action="todo-restore" data-id="${row.id}">다시 할 일로</button><button type="button" class="danger" data-action="todo-delete" data-id="${row.id}">삭제</button></div></div>`);
   }
@@ -127,9 +180,9 @@ export function createExtras(ctx) {
     if(!card||!target.matches('[data-todo-field]'))return false;
     await flushTodoCard(card);return true;
   }
-  async function createTodoNote(){
+  async function createTodoNote(point){
     await flushTodoCards();
-    const result=await api('/todos',{method:'POST',body:{title:'',body:'',target_date:todo.today}});
+    const result=await api('/todos',{method:'POST',body:{title:'',body:'',target_date:todo.today,...(point?{pos_x:point.x,pos_y:point.y}:{})}});
     await renderTodos();
     const memo=document.querySelector(`#todo-grid [data-todo-id="${result.todo.id}"] .todo-note-body`);
     memo?.focus();
@@ -138,7 +191,10 @@ export function createExtras(ctx) {
     if(state.view!=='todos'||modal.open||!event.target.closest?.('.workspace'))return false;
     if(event.target.closest('.topbar,.horizontal-nav,.page-head,.todo-head,.todo-note,.done-board,button,input,textarea,a'))return false;
     event.preventDefault();
-    await createTodoNote();return true;
+    // 메모 보드 안을 오른쪽 클릭하면 그 자리에 새 메모를 만든다.
+    const grid=document.querySelector('#todo-grid.free'),box=grid?.getBoundingClientRect();
+    const point=box&&event.clientX>=box.left&&event.clientX<=box.right&&event.clientY>=box.top&&event.clientY<=box.bottom?{x:Math.round(Math.min(Math.max(0,event.clientX-box.left),Math.max(0,grid.clientWidth-285))),y:Math.round(Math.max(0,event.clientY-box.top))}:null;
+    await createTodoNote(point);return true;
   }
   async function toggleTodo(target){
     const card=target.closest('.todo-note'),id=Number(card.dataset.todoId);
@@ -152,10 +208,12 @@ export function createExtras(ctx) {
     if(state.view!=='todos')return;
     todo.items=result.todos;todo.today=result.today;todo.todayOpen=result.today_open;
     const pending=todo.items.filter(row=>!row.done),completed=todo.items.filter(row=>row.done);
-    const todoPanel=`<section class="todo-panel" aria-labelledby="todo-heading"><div class="todo-layout"><div class="todo-active"><div class="todo-head"><div><p class="eyebrow">STICKY NOTES</p><h2 id="todo-heading">오늘의 할 일 <small id="todo-today-count">오늘 ${todo.todayOpen}건</small></h2><p>노란 메모지에 바로 입력하세요. 빈 공간을 마우스 오른쪽 버튼으로 누르면 새 메모지가 만들어집니다.</p></div></div><div class="todo-grid" id="todo-grid" tabindex="0" aria-label="진행 중인 메모. 빈 공간에서 오른쪽 클릭으로 새 메모 추가">${pending.map(todoCard).join('')}</div></div><aside class="done-board" aria-label="완료 보드"><div class="done-board-head"><div><p class="eyebrow">FINISHED NOTES</p><h2>완료 보드 <small>${completed.length}건</small></h2></div><span aria-hidden="true">✓</span></div><p class="done-board-hint">완료한 메모를 누르면 크게 펼쳐집니다.</p><div class="done-board-notes">${completed.length?completed.map(doneNote).join(''):`<p class="done-board-empty">완료 체크한 메모가 여기에 붙습니다.</p>`}</div></aside></div></section>`;
+    const todoPanel=`<section class="todo-panel" aria-labelledby="todo-heading"><div class="todo-layout"><div class="todo-active"><div class="todo-head"><div><p class="eyebrow">STICKY NOTES</p><h2 id="todo-heading">오늘의 할 일 <small id="todo-today-count">오늘 ${todo.todayOpen}건</small></h2><p>노란 메모지에 바로 입력하세요. 빈 공간을 마우스 오른쪽 버튼으로 누르면 그 자리에 새 메모지가 만들어지고, 메모 위·아래 테두리를 끌면 원하는 위치로 옮길 수 있습니다.</p></div></div><div class="todo-grid" id="todo-grid" tabindex="0" aria-label="진행 중인 메모. 빈 공간에서 오른쪽 클릭으로 새 메모 추가">${pending.map(todoCard).join('')}</div></div><aside class="done-board" aria-label="완료 보드"><div class="done-board-head"><div><p class="eyebrow">FINISHED NOTES</p><h2>완료 보드 <small>${completed.length}건</small></h2></div><span aria-hidden="true">✓</span></div><p class="done-board-hint">완료한 메모를 누르면 크게 펼쳐집니다.</p><div class="done-board-notes">${completed.length?completed.map(doneNote).join(''):`<p class="done-board-empty">완료 체크한 메모가 여기에 붙습니다.</p>`}</div></aside></div></section>`;
     document.querySelector('#content').innerHTML=pageHead('PERSONAL NOTES','TO-DO List','할 일을 메모로 정리하고 완료 상태를 관리하세요.')+todoPanel;
+    layoutTodoBoard();
   }
   async function todoFileDrop(card,files){
+    if(card.classList.contains('locked'))throw new Error('잠긴 메모에는 파일을 첨부할 수 없습니다. 잠금을 해제해 주세요.');
     await flushTodoCard(card);
     for(const file of files){const body=new FormData();body.append('file',file);await api(`/todos/${card.dataset.todoId}/files`,{method:'POST',body});}
     await renderTodos();toast('메모에 파일을 첨부했습니다.');
@@ -232,6 +290,8 @@ export function createExtras(ctx) {
   async function action(action, id, button) {
     const scope = button.dataset.scope;
     if(action==='todo-open-done'){openDoneNote(id);return true;}
+    if(action==='todo-lock'){const card=button.closest('.todo-note');if(card)await flushTodoCard(card);openDialog('메모 잠금',`<form id="todo-lock-form" data-id="${Number(id)}"><p class="help-line">잠그면 메모 내용과 첨부파일이 보이지 않습니다. 이 비밀번호를 입력해야 잠금이 풀립니다. 비밀번호는 다시 확인할 수 없으니 잊지 않도록 주의하세요.</p>${input('password','잠금 비밀번호 (4~64자)','','type="password" required minlength="4" maxlength="64" autocomplete="new-password"')}${input('confirm','비밀번호 확인','','type="password" required minlength="4" maxlength="64" autocomplete="new-password"')}<div class="form-actions"><button type="button" data-action="close">취소</button><button class="primary" type="submit">잠금</button></div></form>`);modal.querySelector('input[name="password"]')?.focus();return true;}
+    if(action==='todo-unlock'){openDialog('메모 잠금 해제',`<form id="todo-unlock-form" data-id="${Number(id)}">${input('password','잠금 비밀번호','','type="password" required maxlength="64" autocomplete="current-password"')}<p class="help-line">비밀번호가 맞으면 잠금이 해제되고 내용이 다시 보입니다.</p><div class="form-actions"><button type="button" data-action="close">취소</button><button class="primary" type="submit">잠금 해제</button></div></form>`);modal.querySelector('input[name="password"]')?.focus();return true;}
     if(action==='todo-restore'){await api('/todos/'+id,{method:'PATCH',body:{done:false}});modal.close();await renderTodos();toast('메모를 할 일로 옮겼습니다.');return true;}
     if(action==='todo-delete'){if(confirm('이 할 일 메모를 삭제할까요?')){const card=document.querySelector(`#todo-grid [data-todo-id="${Number(id)}"]`),entry=card&&todoSaves.get(card);if(entry){clearTimeout(entry.timer);if(entry.saving)await entry.saving.catch(()=>{});entry.savedRevision=entry.revision;}await api('/todos/'+id,{method:'DELETE'});if(modal.open&&modal.querySelector('.todo-expanded'))modal.close();await renderTodos();toast('할 일을 삭제했습니다.');}return true;}
     if(action==='todo-file-delete'){if(confirm('첨부파일을 삭제할까요?')){await api('/todo-files/'+id,{method:'DELETE'});await renderTodos();}return true;}
@@ -268,6 +328,8 @@ export function createExtras(ctx) {
     return false;
   }
   async function submit(form, values) {
+    if(form.id==='todo-lock-form'){if(values.password!==values.confirm)throw new Error('비밀번호 확인이 일치하지 않습니다.');await api(`/todos/${Number(form.dataset.id)}/lock`,{method:'POST',body:{password:values.password}});modal.close();await renderTodos();toast('메모를 잠갔습니다.');return true;}
+    if(form.id==='todo-unlock-form'){await api(`/todos/${Number(form.dataset.id)}/unlock`,{method:'POST',body:{password:values.password}});modal.close();await renderTodos();toast('잠금을 해제했습니다.');return true;}
     if (form.id === 'category-form') {
       const scope = form.dataset.scope, categoryId = form.dataset.id;
       if (categoryId) await api('/categories/' + categoryId, { method: 'PUT', body: { scope, name: values.name } });
@@ -296,5 +358,5 @@ export function createExtras(ctx) {
     }
     return false;
   }
-  return { loadCategories, categoryPath, leafSelect, attachCategoryPanel, renderWork, renderTodos, renderReports, todoInput, todoBlur, todoContextMenu, toggleTodo, todoFileDrop, customerFileDrop, rememberTodoSize, action, submit, categoryDepth: (scope, id) => cache[scope].find(row => row.id === id)?.level ?? 0, resetWorkPage: () => { work.page = 1; }, clearWorkCustomer: () => { work.customer = null; work.page = 1; } };
+  return { loadCategories, categoryPath, leafSelect, attachCategoryPanel, renderWork, renderTodos, renderReports, todoInput, todoBlur, todoContextMenu, toggleTodo, todoFileDrop, customerFileDrop, rememberTodoSize, todoDragStart, todoDragMove, todoDragEnd, layoutTodoBoard, action, submit, categoryDepth: (scope, id) => cache[scope].find(row => row.id === id)?.level ?? 0, resetWorkPage: () => { work.page = 1; }, clearWorkCustomer: () => { work.customer = null; work.page = 1; } };
 }
