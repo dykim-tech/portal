@@ -8,7 +8,7 @@ import { transaction } from './db.mjs';
 
 // 업로드 파일 크기 제한 없음. 디스크 여유 공간이 실제 한도가 된다.
 const CHUNK_SIZE = 1024 * 1024;
-const tables = new Set(['files', 'manuals', 'installation_files', 'todo_files', 'customer_files']);
+const tables = new Set(['files', 'manuals', 'installation_files', 'todo_files', 'customer_files', 'meeting_files']);
 
 function table(name) {
   if (!tables.has(name)) throw new Error('Unknown file table');
@@ -194,7 +194,7 @@ export async function storeUpload(db, scope, file, insertRecord) {
 export function getStoredFile(db, scope, fileId) {
   table(scope);
   const preview = ['manuals', 'installation_files'].includes(scope) ? 'preview_type' : 'NULL AS preview_type';
-  const parent = {files:'item_id',manuals:'folder_id',installation_files:'installation_id',todo_files:'todo_id',customer_files:'customer_id'}[scope];
+  const parent = {files:'item_id',manuals:'folder_id',installation_files:'installation_id',todo_files:'todo_id',customer_files:'customer_id',meeting_files:'meeting_id'}[scope];
   return db.prepare(`SELECT id,name,size,created_at,${preview},${parent} AS parent_id,length(bytes) AS inline_size FROM ${scope} WHERE id=?`).get(fileId);
 }
 

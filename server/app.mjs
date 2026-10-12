@@ -21,6 +21,7 @@ import { registerLeave } from './leave.mjs';
 import { createSelfCheck } from './self-check.mjs';
 import { registerUsage } from './usage.mjs';
 import { initializeTodos, registerTodos } from './todos.mjs';
+import { initializeMeetings, registerMeetings } from './meetings.mjs';
 
 const scrypt = promisify(scryptCallback);
 const hash = value => createHash('sha256').update(value).digest('hex');
@@ -85,6 +86,7 @@ export function createPortal(options = {}) {
   initializeUploadChunks(db);
   initializeWork(db);
   initializeTodos(db);
+  initializeMeetings(db);
   initializeProjects(db);
   initializeActivity(db);
   const app = express();
@@ -218,7 +220,7 @@ export function createPortal(options = {}) {
     const id=integer(req.params.id,'사용자',1,Number.MAX_SAFE_INTEGER);
     if(id===req.user.id) throw fail(400,'본인 계정은 삭제할 수 없습니다.');
     if(!db.prepare('SELECT id FROM users WHERE id=?').get(id)) throw fail(404,'사용자를 찾을 수 없습니다.');
-    const references=[['items','created_by'],['items','updated_by'],['files','uploaded_by'],['history','actor_id'],['notifications','user_id'],['installations','created_by'],['installations','updated_by'],['installation_files','uploaded_by'],['manuals','uploaded_by'],['work_logs','created_by'],['work_logs','updated_by']];
+    const references=[['items','created_by'],['items','updated_by'],['files','uploaded_by'],['history','actor_id'],['notifications','user_id'],['installations','created_by'],['installations','updated_by'],['installation_files','uploaded_by'],['manuals','uploaded_by'],['work_logs','created_by'],['work_logs','updated_by'],['meetings','created_by'],['meetings','updated_by'],['meeting_files','uploaded_by']];
     if(references.some(([table,column])=>db.prepare(`SELECT 1 FROM ${table} WHERE ${column}=? LIMIT 1`).get(id))) throw fail(409,'작성·수정 이력이 있는 계정은 삭제할 수 없습니다. 계정을 비활성화해 주세요.');
     db.prepare('DELETE FROM users WHERE id=?').run(id);
     res.json({ok:true});
@@ -308,6 +310,7 @@ export function createPortal(options = {}) {
   registerFeatures(app, { db, requireRole, upload });
   registerWork(app, { db, requireRole, upload });
   registerTodos(app, { db, upload });
+  registerMeetings(app, { db, requireRole, upload });
   registerProjects(app, { db, requireRole });
   const selfCheck = options.selfCheck === false ? null : createSelfCheck({ dataDir });
   registerOperations(app, { db, requireRole, instanceId, selfCheck });
