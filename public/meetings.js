@@ -38,7 +38,7 @@ export function createMeetings({ api, esc, state, canEdit, openDialog, input, to
       ${editable ? `<div class="form-actions"><button type="button" data-action="close">${id ? '닫기' : '취소'}</button>${id ? `<button type="button" class="danger" data-action="meeting-delete" data-id="${row.id}">삭제</button>` : ''}<button class="primary">저장</button></div>` : ''}</form>
       ${id ? `<section class="subsection"><h3>후속 조치 <small>${data.actions.filter(a => !a.done_at).length}건 미완료 / 전체 ${data.actions.length}건</small></h3>${actions || '<p class="muted">등록된 후속 조치가 없습니다.</p>'}${editable ? `<form id="meeting-action-form" class="meeting-action-form">${input('task', '할 일 *', '', 'required maxlength="500"')}${input('owner', '담당자', '', 'maxlength="100"')}${input('due_date', '기한', '', 'type="date"')}<button class="primary">추가</button></form>` : ''}</section>
       <section class="subsection meeting-files" data-meeting-drop="${row.id}"><h3>첨부파일 <small>${data.files.length}개</small></h3>${files || '<p class="muted">첨부파일이 없습니다.</p>'}${editable ? `<form class="upload" id="meeting-upload"><input aria-label="첨부할 파일" type="file" name="file" multiple required><button type="submit">파일 첨부</button></form><p class="help-line">파일을 이 영역에 끌어 놓아도 첨부됩니다.</p>` : ''}</section>`
-      : '<p class="save-note">회의록을 먼저 저장하면 후속 조치와 첨부파일을 등록할 수 있습니다.</p>'}`);
+      : '<p class="save-note">저장한 뒤 목록에서 회의록을 다시 열면 후속 조치와 첨부파일을 등록할 수 있습니다.</p>'}`);
   }
 
   async function uploadFiles(files) {
@@ -77,7 +77,9 @@ export function createMeetings({ api, esc, state, canEdit, openDialog, input, to
       case 'meeting-form': {
         const row = meetingState.selected;
         const saved = await api('/meetings' + (row.id ? '/' + row.id : ''), { method: row.id ? 'PUT' : 'POST', body: { ...values, version: row.version } });
-        await renderMeetings(); await meetingDialog(saved.meeting.id); toast('회의록을 저장했습니다.'); return true;
+        // 저장하면 창을 닫고 목록을 새로 고친다. 후속 조치·첨부는 목록에서 회의록을 다시 열어 추가한다.
+        modal.close(); await renderMeetings();
+        toast(row.id ? '회의록을 저장했습니다.' : `회의록을 저장했습니다. 목록에서 '${saved.meeting.title}'을(를) 열면 후속 조치와 첨부파일을 추가할 수 있습니다.`); return true;
       }
       case 'meeting-action-form': await api(`/meetings/${meetingState.selected.id}/actions`, { method: 'POST', body: values }); await meetingDialog(meetingState.selected.id); await renderMeetings(); modal.querySelector('#meeting-action-form input[name="task"]')?.focus(); return true;
       case 'meeting-upload': await uploadFiles([...form.elements.file.files]); return true;
