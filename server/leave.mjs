@@ -185,7 +185,7 @@ export function registerLeave(app, { db, requireRole }) {
   db.exec('CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
   const admin = requireRole(['admin']);
   const settings = () => { try { return JSON.parse(db.prepare("SELECT value FROM app_settings WHERE key='leave'").get()?.value ?? '{}'); } catch { return {}; } };
-  let cache = null;
+  let cache = null, pending = null;
   async function load(force) {
     const { file, employee } = settings();
     if (!file || !employee) return { configured: false };
@@ -196,8 +196,12 @@ export function registerLeave(app, { db, requireRole }) {
     if (info.size > MAX_FILE_BYTES) return { ...base, error: '휴가 파일이 너무 큽니다(20MB 초과).' };
     const key = [file, info.size, info.mtimeMs].join('|');
     if (force || !cache || cache.key !== key) {
-      try { cache = { key, sheetOf: readWorkbook(await readFile(file)) }; }
+      // 같은 파일을 동시에 여러 번 읽지 않도록 진행 중인 읽기를 함께 기다린다.
+      if (!pending || pending.key !== key) pending = { key, promise: readFile(file).then(buffer => ({ key, sheetOf: readWorkbook(buffer) })) };
+      const current = pending;
+      try { cache = await current.promise; }
       catch (error) { cache = null; return { ...base, error: error.expose ? error.message : '휴가 파일을 읽지 못했습니다. 엑셀에서 파일이 열려 저장 중인지 확인해 주세요.' }; }
+      finally { if (pending === current) pending = null; }
     }
     try { return { ...base, saved_at: new Date(info.mtimeMs).toISOString(), today: koreaDate(), ...extractLeave(cache.sheetOf, employee) }; }
     catch (error) { return { ...base, error: error.expose ? error.message : '휴가 정보를 해석하지 못했습니다.' }; }

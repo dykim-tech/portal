@@ -3,6 +3,7 @@ import { createBackup, prepareRestoreSource, restoreDatabaseFile, latestBackupTi
 import { existsSync, renameSync, rmSync, statSync, statfsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { recordActivity } from './activity.mjs';
+import { createDatabaseMonitor } from './db-health.mjs';
 
 const port = Number(process.env.PORT ?? 3000), host = process.env.HOST ?? '127.0.0.1';
 const dataDir = resolve(process.env.DATA_DIR ?? './data');
@@ -33,7 +34,7 @@ async function restoreInPlace({ path, restoreId }) {
     portal.db.close();
     oldClosed = true;
     previous = restoreDatabaseFile(dataDir, prepared.path);
-    portal = createPortal({ dataDir, backupDir, onRestore: restoreInPlace, restoreResult: { id: restoreId, ok: true } });
+    portal = createPortal({ dataDir, backupDir, onRestore: restoreInPlace, onDatabaseError: reportDatabaseError, restoreResult: { id: restoreId, ok: true } });
     newOpened = true;
     recordActivity(portal.db, { scope: 'backups', action: 'restore', title: '백업/복구 · 시점 복구 완료', detail: path.split(/[\\/]/).at(-1), key: `restore:${restoreId}` });
     await listen();
@@ -50,7 +51,7 @@ async function restoreInPlace({ path, restoreId }) {
         renameSync(previous, live);
         rmSync(failed, { force: true });
       }
-      if (oldClosed) portal = createPortal({ dataDir, backupDir, onRestore: restoreInPlace, restoreResult: { id: restoreId, ok: false } });
+      if (oldClosed) portal = createPortal({ dataDir, backupDir, onRestore: restoreInPlace, onDatabaseError: reportDatabaseError, restoreResult: { id: restoreId, ok: false } });
       else portal.maintenance.restoring = false;
       await listen();
     } catch (recoveryError) {
@@ -60,7 +61,11 @@ async function restoreInPlace({ path, restoreId }) {
   } finally { prepared?.cleanup(); restoring = false; }
 }
 
-portal = createPortal({ dataDir, backupDir, onRestore: restoreInPlace });
+// 데이터베이스 감시(자세한 설명은 db-health.mjs)
+const monitor = createDatabaseMonitor({ db: () => portal.db, path: join(dataDir, 'portal.sqlite'), restoring: () => restoring,
+  supervised: () => Boolean(process.send) || process.env.PORTAL_RESTART_ON_DB_FAILURE === 'true', exit: code => process.exit(code) });
+const databaseCheck = monitor.check, reportDatabaseError = monitor.report;
+portal = createPortal({ dataDir, backupDir, onRestore: restoreInPlace, onDatabaseError: reportDatabaseError });
 portal.pruneBackups();
 try {
   const cleaned = cleanBackupFiles(backupDir);
@@ -69,20 +74,14 @@ try {
 await listen();
 console.log(`Portal: ${process.env.APP_ORIGIN ?? 'http://localhost:3000'}`);
 console.log(`First-run setup code, if needed: ${portal.tokenPath}`);
-// 데이터베이스 감시: 디스크 I/O 오류처럼 다시 시작해야 풀리는 SQLite 오류가 3분(3회) 연속되면 종료한다.
-// 감독 프로세스(windows-start.mjs)가 곧바로 다시 띄워 새 연결로 복구한다.
-const FATAL_SQLITE = /disk I\/O error|database disk image is malformed|unable to open database file/i;
-let databaseFailures = 0;
-function databaseCheck(error) {
-  if (error && !FATAL_SQLITE.test(String(error.message))) return;
-  if (!error) {
-    try { portal.db.prepare('SELECT id FROM users LIMIT 1').get(); } catch (checkError) { error = checkError; }
-  }
-  if (!error || !FATAL_SQLITE.test(String(error.message))) { databaseFailures = 0; return; }
-  databaseFailures++;
-  console.error(`Database check failed (${databaseFailures}/3)`, error);
-  // 감독 프로세스 아래에서 실행될 때만(또는 명시적으로 켠 경우) 종료해 재시작하게 한다. npm start로 직접 실행했다면 오류만 기록한다.
-  if (databaseFailures >= 3 && (process.send || process.env.PORTAL_RESTART_ON_DB_FAILURE === 'true')) { console.error('Database unavailable for 3 minutes; exiting so the supervisor restarts the portal'); process.exit(75); }
+// WAL 정리: 1시간마다 WAL 내용을 본 파일에 옮겨 둔다(PASSIVE: 다른 작업을 기다리게 하지 않음).
+// 실측: 2026-10-06 이후 본 파일이 갱신되지 않고 764쪽이 WAL에만 있었다. portal.sqlite만 복사해 옮기면 그만큼 빠질 수 있어 주기적으로 반영한다.
+let lastCheckpoint = 0;
+function checkpointWal() {
+  if (Date.now() - lastCheckpoint < 60 * 60 * 1000) return;
+  lastCheckpoint = Date.now();
+  const result = portal.db.prepare('PRAGMA wal_checkpoint(PASSIVE)').get();
+  if (result?.busy) console.warn('WAL checkpoint was busy; it will be retried in an hour');
 }
 // 자동 백업: 마지막 백업이 24시간보다 오래되면 백업한다. 드라이브 여유 공간이 DB 크기의 2배보다 작으면 건너뛴다.
 const AUTO_BACKUP_INTERVAL = 24 * 60 * 60 * 1000;
@@ -113,6 +112,7 @@ const timer = setInterval(() => {
     portal.tick();
     portal.pruneBackups();
     databaseCheck();
+    checkpointWal();
     portal.selfCheck?.runIfCodeChanged();
   } catch (error) { console.error('Periodic portal task failed', error); databaseCheck(error); }
   autoBackup().catch(error => console.error('Automatic backup failed', error));

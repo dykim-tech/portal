@@ -35,7 +35,7 @@ Get-ScheduledTaskInfo -TaskName 'DYKIM Personal Portal' | Select-Object LastRunT
 Invoke-RestMethod 'http://127.0.0.1:3000/api/health'
 ```
 
-- 정상: 작업 상태 `Running`, health 응답에 `ok: true`, `database: ok`. `database: error`이면 DB를 읽지 못하는 상태이며, 3분 동안 계속되면 포털이 스스로 다시 시작합니다. 포털이 10분 안에 5번 넘게 멈추면 5분 쉬었다가 계속 다시 시도합니다(`data\server.log`에 `failed repeatedly` 기록).
+- 정상: 작업 상태 `Running`, health 응답에 `ok: true`, `database: ok`. `database: error`이면 DB를 읽지 못하는 상태입니다. 포털은 새 연결로 DB 파일을 열어 보고, 파일은 정상이면(절전 해제 직후처럼 기존 연결만 끊긴 경우) 바로 스스로 다시 시작하며, 드라이브가 아직 준비되지 않았으면 20초마다 확인하다가 3번 연속 실패하면 다시 시작합니다(2026-10-12부터, 이전에는 3분). 포털이 10분 안에 5번 넘게 멈추면 5분 쉬었다가 계속 다시 시도합니다(`data\server.log`에 `failed repeatedly` 기록).
 - health의 `ok: true`는 웹 서버 응답만 뜻합니다. 로그인 오류가 나면 `data\server.log`도 함께 확인합니다.
 - 화면이 예전 모습이면 브라우저에서 **Ctrl + F5**로 강력 새로고침합니다.
 

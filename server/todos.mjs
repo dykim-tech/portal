@@ -104,6 +104,7 @@ export function registerTodos(app,{db,upload}){
     if(typeof req.body.password!=='string'||!req.body.password||req.body.password.length>64||!await lockMatches(req.body.password,row.lock_hash)){
       const count=(state&&!(state.until>0&&state.until<=Date.now())?state.count:0)+1;
       attempts.set(row.id,count>=5?{count:0,until:Date.now()+60000}:{count,until:0});
+      if(attempts.size>1000)for(const [key,value] of attempts)if(!(value.until>Date.now()))attempts.delete(key); // 오래된 실패 기록 정리
       throw fail(403,'잠금 비밀번호가 맞지 않습니다.');
     }
     attempts.delete(row.id);
@@ -112,7 +113,7 @@ export function registerTodos(app,{db,upload}){
     res.json({todo:{...get(row.id),files}});
   });
   app.delete('/api/todos/:id',(req,res)=>{
-    const row=owned(req);transaction(db,()=>{for(const file of db.prepare('SELECT id FROM todo_files WHERE todo_id=?').all(row.id))deleteUploadChunks(db,'todo_files',file.id);db.prepare('DELETE FROM todos WHERE id=?').run(row.id);});res.json({ok:true});
+    const row=owned(req);transaction(db,()=>{for(const file of db.prepare('SELECT id FROM todo_files WHERE todo_id=?').all(row.id))deleteUploadChunks(db,'todo_files',file.id);db.prepare('DELETE FROM todos WHERE id=?').run(row.id);});attempts.delete(row.id);res.json({ok:true});
   });
   app.post('/api/todos/:id/files',(req,res,next)=>{unlocked(owned(req));next();},upload,async(req,res)=>{
     if(!req.file)throw fail(400,'첨부할 파일을 선택해 주세요.');
