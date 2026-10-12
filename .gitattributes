@@ -1,0 +1,2 @@
+# 한글(.hwpx) 문서 템플릿은 줄바꿈 변환 없이 그대로 보관한다.
+server/doc-templates/** -text

@@ -9,6 +9,7 @@ const attachmentTables = [
   ['customer_files', '업무관리 고객 첨부'],
   ['todo_files', 'TO-DO List 첨부'],
   ['meeting_files', '회의록 첨부'],
+  ['draft_files', '업무기안 첨부'],
 ];
 
 function fileSize(path) {

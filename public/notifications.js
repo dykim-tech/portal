@@ -1,6 +1,6 @@
 const activityViews = {
   installations: '설치관리', library: '자료 관리', items: '자산 관리',
-  work: '업무관리', meetings: '회의록', reports: '리포트', users: '사용자 관리', backups: '백업/복구'
+  work: '업무관리', meetings: '회의록', drafts: '업무기안', reports: '리포트', users: '사용자 관리', backups: '백업/복구'
 };
 const activityKinds = { change: '변경', missing: '정보 누락', monthly: '월간 요약' };
 const deadlineKinds = new Set(['upcoming', 'today', 'overdue']);

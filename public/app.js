@@ -1,6 +1,7 @@
 import { createExtras } from './extras.js';
 import { createManagement } from './management.js';
 import { createMeetings } from './meetings.js';
+import { createDrafts } from './drafts.js';
 import { notificationHtml } from './notifications.js';
 import { orderedMenuIds, moveMenuId } from './navigation.js';
 const root=document.querySelector('#app'), modal=document.querySelector('#modal');
@@ -100,7 +101,7 @@ function authPage(setup){
   else {emailField.closest('label').outerHTML=loginField;root.querySelector('.auth-note').textContent='기존 계정은 이전 이메일의 @ 앞부분을 아이디로 입력하세요. 아이디가 겹치면 관리자에게 확인해 주세요.';}
 }
 function shell(){
-  const menus=[['dashboard','대시보드'],['meetings','회의록'],['installations','설치관리'],['projects','프로젝트 관리'],['library','자료 관리'],['items','자산 관리'],['todos','TO-DO List'],['work','업무관리'],['reports','리포트'],['tools','도구'],['outlook','Mail'],['gracecns','GRACECNS'],['settings','설정']];
+  const menus=[['dashboard','대시보드'],['meetings','회의록'],['drafts','업무기안'],['installations','설치관리'],['projects','프로젝트 관리'],['library','자료 관리'],['items','자산 관리'],['todos','TO-DO List'],['work','업무관리'],['reports','리포트'],['tools','도구'],['outlook','Mail'],['gracecns','GRACECNS'],['settings','설정']];
   sidebarMenus=menus;
   const defaults=sidebarMenus.map(([view])=>view);
   let local=null;try{local=JSON.parse(localStorage.getItem(sidebarMenuKey()));}catch{}
@@ -145,10 +146,10 @@ function toggleSidebar(){
 // 사용자 관리·백업/복구·운영관리·사용량 관리는 설정 안의 관리자 메뉴이므로 해당 화면에서는 메뉴의 '설정'을 강조한다.
 const settingsChildViews=['users','backups','operations','usage'];
 function navView(){return settingsChildViews.includes(state.view)?'settings':state.view;}
-function updateNav(){document.querySelectorAll('[data-view]').forEach(b=>{const menu=b.closest('nav')||b.classList.contains('sidebar-link');const current=menu?b.dataset.view===navView():b.dataset.view===state.view;b.classList.toggle('active',current);if(menu)b.setAttribute('aria-current',current?'page':'false');});const count=document.querySelector('#nav-count');if(count){count.textContent=state.unread;count.hidden=!state.unread;}const bread=document.querySelector('#breadcrumb');if(bread)bread.textContent={dashboard:'대시보드',meetings:'회의록',installations:'설치관리',projects:'프로젝트 관리',library:'자료 관리',items:'자산 관리',todos:'TO-DO List',work:'업무관리',reports:'리포트',notifications:'알림',users:'설정 / 사용자 관리',backups:'설정 / 백업/복구',operations:'설정 / 운영관리',usage:'설정 / 사용량 관리',tools:'도구',settings:'설정'}[state.view];const back=document.querySelector('[data-action="view-back"]');if(back)back.disabled=historyIndex===0&&state.view==='dashboard';}
+function updateNav(){document.querySelectorAll('[data-view]').forEach(b=>{const menu=b.closest('nav')||b.classList.contains('sidebar-link');const current=menu?b.dataset.view===navView():b.dataset.view===state.view;b.classList.toggle('active',current);if(menu)b.setAttribute('aria-current',current?'page':'false');});const count=document.querySelector('#nav-count');if(count){count.textContent=state.unread;count.hidden=!state.unread;}const bread=document.querySelector('#breadcrumb');if(bread)bread.textContent={dashboard:'대시보드',meetings:'회의록',drafts:'업무기안',installations:'설치관리',projects:'프로젝트 관리',library:'자료 관리',items:'자산 관리',todos:'TO-DO List',work:'업무관리',reports:'리포트',notifications:'알림',users:'설정 / 사용자 관리',backups:'설정 / 백업/복구',operations:'설정 / 운영관리',usage:'설정 / 사용량 관리',tools:'도구',settings:'설정'}[state.view];const back=document.querySelector('[data-action="view-back"]');if(back)back.disabled=historyIndex===0&&state.view==='dashboard';}
 async function refreshCount(){const result=await api('/notifications');state.unread=result.unread;updateNav();return result;}
 async function signedIn(user){state.user=user;state.view='dashboard';historyIndex=0;historyGuarded=false;shell();await renderView();await refreshCount();clearInterval(pollTimer);pollTimer=setInterval(()=>{if(state.user)refreshCount().catch(()=>{});},60000);}
-async function renderView(){if(bulkMode&&bulkMode.view!==state.view)bulkMode=null;updateNav();if(state.view==='items')await renderItems();else if(state.view==='users')await showUsers();else if(state.view==='backups')await renderBackups();else if(state.view==='operations')await management.renderOperations();else if(state.view==='usage')await management.renderUsage();else if(state.view==='tools')renderTools();else if(state.view==='projects')await management.renderProjects();else if(state.view==='notifications')await renderNotifications();else if(state.view==='dashboard')await renderDashboard();else if(state.view==='installations')await renderInstallations();else if(state.view==='library')await renderLibrary();else if(state.view==='todos')await extras.renderTodos();else if(state.view==='work')await extras.renderWork();else if(state.view==='reports')await extras.renderReports();else if(state.view==='meetings')await meetings.renderMeetings();else renderSettings();}
+async function renderView(){if(bulkMode&&bulkMode.view!==state.view)bulkMode=null;updateNav();if(state.view==='items')await renderItems();else if(state.view==='users')await showUsers();else if(state.view==='backups')await renderBackups();else if(state.view==='operations')await management.renderOperations();else if(state.view==='usage')await management.renderUsage();else if(state.view==='tools')renderTools();else if(state.view==='projects')await management.renderProjects();else if(state.view==='notifications')await renderNotifications();else if(state.view==='dashboard')await renderDashboard();else if(state.view==='installations')await renderInstallations();else if(state.view==='library')await renderLibrary();else if(state.view==='todos')await extras.renderTodos();else if(state.view==='work')await extras.renderWork();else if(state.view==='reports')await extras.renderReports();else if(state.view==='meetings')await meetings.renderMeetings();else if(state.view==='drafts')await drafts.renderDrafts();else renderSettings();}
 async function renderItems(){
   await extras.loadCategories('items');
   const result=await api('/items?'+new URLSearchParams({...state.filters,...listingQuery('items',state.page)}));
@@ -467,7 +468,7 @@ let todoResizeTimer=null;window.addEventListener('resize',()=>{if(state.view!=='
 document.addEventListener('pointerup',()=>{if(activeTodoSizeCard){extras.rememberTodoSize(activeTodoSizeCard);activeTodoSizeCard=null;}});
 function fileDropTarget(event){
   if(!event.dataTransfer?.types?.includes('Files'))return null;
-  if(modal.open)return state.view==='meetings'?meetings.dropTarget(event.target):null;
+  if(modal.open)return state.view==='meetings'?meetings.dropTarget(event.target):state.view==='drafts'?drafts.dropTarget(event.target):null;
   if(state.view==='todos')return event.target.closest?.('.todo-note')??null;
   if(state.view==='work'&&canEdit())return event.target.closest?.('.customer-detail')??null;
   if(state.view==='library'&&canEdit())return libraryDropInfo(event.target)?.el??null;
@@ -660,6 +661,7 @@ document.addEventListener('drop',async event=>{
     if(state.view==='todos')await extras.todoFileDrop(target,files);
     else if(state.view==='work')await extras.customerFileDrop(files);
     else if(state.view==='meetings')await meetings.uploadFiles(files);
+    else if(state.view==='drafts')await drafts.uploadFiles(files);
     else if(state.view==='library'){const info=libraryDropInfo(event.target);await uploadLibraryFiles(files,info?info.folder:features.folder??null,skipped);}
   }catch(error){toast(error.message);}
 });
@@ -700,6 +702,7 @@ document.addEventListener('click',async event=>{
     if(action==='backup-create'){await api('/backups',{method:'POST',body:{}});await renderBackups();toast('백업을 저장했습니다. 목록에서 다운로드할 수 있습니다.');return;}
     if(action==='backup-restore'){backupRestoreDialog();return;}
     if(await meetings.action(action,id,button))return;
+    if(await drafts.action(action,id,button))return;
     if(await management.action(action,id,button))return;
     if(await extras.action(action,id,button))return;
     if(await featureAction(action,id,button))return;
@@ -722,7 +725,7 @@ document.addEventListener('change',async event=>{const todo=event.target.closest
 document.addEventListener('change',async event=>{if(event.target.id!=='library-folder-picker'||!event.target.files.length)return;const input=event.target,picked=folderPickerItems(input.files),target=features.uploadTarget!==undefined?features.uploadTarget:features.folder??null;features.uploadTarget=undefined;try{await uploadLibraryTree(picked,target);}catch(error){toast(error.message);}finally{input.value='';}});
 document.addEventListener('change',event=>{const box=event.target.closest('input[data-bulk-id]');if(!box||!bulkMode)return;if(box.checked)bulkMode.selected.add(box.dataset.bulkId);else bulkMode.selected.delete(box.dataset.bulkId);updateBulkUI();});
 document.addEventListener('submit',async event=>{
-  const form=event.target;if(!form.id)return;event.preventDefault();const submit=form.querySelector('button[type="submit"],button:not([type])');const originalSubmitText=submit?.textContent;const errorBox=form.querySelector('.error')??document.querySelector('#dialog-error');if(errorBox)errorBox.textContent='';if(submit){submit.disabled=true;if(form.id==='installation-form')submit.textContent='저장 중…';else if(['upload-form','manual-form','installation-upload','meeting-upload'].includes(form.id))submit.textContent='업로드 중…';}
+  const form=event.target;if(!form.id)return;event.preventDefault();const submit=form.querySelector('button[type="submit"],button:not([type])');const originalSubmitText=submit?.textContent;const errorBox=form.querySelector('.error')??document.querySelector('#dialog-error');if(errorBox)errorBox.textContent='';if(submit){submit.disabled=true;if(form.id==='installation-form')submit.textContent='저장 중…';else if(['upload-form','manual-form','installation-upload','meeting-upload','draft-upload'].includes(form.id))submit.textContent='업로드 중…';}
   try{
     const values=Object.fromEntries(new FormData(form));
     if(form.id==='backup-restore-form'){
@@ -734,6 +737,7 @@ document.addEventListener('submit',async event=>{
       return;
     }
     if(await meetings.submit(form,values))return;
+    if(await drafts.submit(form,values))return;
     if(await management.submit(form,values))return;
     if(await extras.submit(form,values))return;
     if(await featureSubmit(form,values))return;
@@ -752,6 +756,7 @@ const features={installationPage:1,installationFilters:{},installation:null,fold
 const extras=createExtras({api,esc,state,features,canEdit,openDialog,input,toast,fmt,pageHead,renderItems,renderInstallations,renderView,modal,labels,listingQuery,decorateListing});
 const management=createManagement({api,esc,state,canEdit,openDialog,input,toast,fmt,pageHead,modal,renderView});
 const meetings=createMeetings({api,esc,state,canEdit,openDialog,input,toast,fmt,modal});
+const drafts=createDrafts({api,esc,state,canEdit,openDialog,input,toast,fmt,modal});
 applyTheme();
 try{const result=await api('/auth/me');if(result.user)await signedIn(result.user);else authPage(result.setupRequired);}catch(error){root.innerHTML=`<main class="error-page"><h1>포털에 연결할 수 없습니다</h1><p>${esc(error.message)}</p><button onclick="location.reload()">다시 시도</button></main>`;root.querySelector('button').removeAttribute('onclick');root.querySelector('button').addEventListener('click',()=>location.reload());}
 

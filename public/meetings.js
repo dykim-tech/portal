@@ -20,7 +20,10 @@ export function createMeetings({ api, esc, state, canEdit, openDialog, input, to
       <div class="footer-row"><span>${data.total}건</span><div class="pager"><button class="small" data-action="meeting-prev" ${data.page <= 1 ? 'disabled' : ''}>이전</button><span>${data.page} / ${pages}</span><button class="small" data-action="meeting-next" ${data.page >= pages ? 'disabled' : ''}>다음</button></div></div></section>`;
   }
 
+  // 같은 회의록 창을 다시 그릴 때(후속 조치·첨부 추가 후) 저장하지 않은 입력과 스크롤 위치를 유지한다.
   async function meetingDialog(id) {
+    const same = id && meetingState.selected?.id === Number(id), form0 = same && modal.open ? modal.querySelector('#meeting-form') : null;
+    const keep = form0 ? Object.fromEntries(new FormData(form0)) : null, previous = same ? meetingState.selected : null, scroll = same ? modal.scrollTop : 0;
     const data = id ? await api('/meetings/' + id) : { meeting: { title: '', meeting_date: today(), start_time: '', end_time: '', location: '', attendees: '', content: '', decisions: '' }, actions: [], files: [] };
     const row = data.meeting; meetingState.selected = row;
     const editable = canEdit(), off = editable ? '' : 'disabled';
@@ -39,6 +42,8 @@ export function createMeetings({ api, esc, state, canEdit, openDialog, input, to
       ${id ? `<section class="subsection"><h3>후속 조치 <small>${data.actions.filter(a => !a.done_at).length}건 미완료 / 전체 ${data.actions.length}건</small></h3>${actions || '<p class="muted">등록된 후속 조치가 없습니다.</p>'}${editable ? `<form id="meeting-action-form" class="meeting-action-form">${input('task', '할 일 *', '', 'required maxlength="500"')}${input('owner', '담당자', '', 'maxlength="100"')}${input('due_date', '기한', '', 'type="date"')}<button class="primary">추가</button></form>` : ''}</section>
       <section class="subsection meeting-files" data-meeting-drop="${row.id}"><h3>첨부파일 <small>${data.files.length}개</small></h3>${files || '<p class="muted">첨부파일이 없습니다.</p>'}${editable ? `<form class="upload" id="meeting-upload"><input aria-label="첨부할 파일" type="file" name="file" multiple required><button type="submit">파일 첨부</button></form><p class="help-line">파일을 이 영역에 끌어 놓아도 첨부됩니다.</p>` : ''}</section>`
       : '<p class="save-note">저장한 뒤 목록에서 회의록을 다시 열면 후속 조치와 첨부파일을 등록할 수 있습니다.</p>'}`);
+    if (keep) { const form = modal.querySelector('#meeting-form'); for (const [key, value] of Object.entries(keep)) if (form.elements[key] && String(previous[key] ?? '') !== value) form.elements[key].value = value; }
+    if (scroll) modal.scrollTop = scroll;
   }
 
   async function uploadFiles(files) {
