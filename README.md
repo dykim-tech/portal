@@ -122,6 +122,10 @@ docker compose exec portal cat /app/data/setup-token.txt
 
 localhost:3000에 열리며 계정과 모든 자료는 `portal_data` 볼륨, 백업은 `portal_backups` 볼륨에 저장됩니다. `docker compose down -v`는 데이터 볼륨을 삭제하므로 사용하지 마세요.
 
+## Kubernetes (Rocky Linux 9, 외부 공개)
+
+서버 1대에 kubeadm으로 Kubernetes를 설치하고 `https://공인IP`로 외부에서 접속하게 하는 절차와 스크립트는 [docs/KUBERNETES.md](docs/KUBERNETES.md)와 `deploy/kubernetes/`에 있습니다. 순서: `00-prepare-node.sh` → `01-init-cluster.sh` → `02-build-image.sh` → `03-deploy.sh <공인IP> [사내IP]` → (데이터 이전) `04-import-data.sh <백업.sqlite>`. 업데이트는 `update.sh`.
+
 ## 사내 서버 운영
 
 HTTPS 역방향 프록시(Caddy 등)를 사용하고 `deploy/Caddyfile.example`의 도메인을 수정하세요. 아래 값을 `.env`에 설정합니다.

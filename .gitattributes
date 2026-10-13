@@ -1,2 +1,6 @@
 # 한글(.hwpx) 문서 템플릿은 줄바꿈 변환 없이 그대로 보관한다.
 server/doc-templates/** -text
+# 리눅스 서버에서 실행하는 스크립트·배포 파일은 항상 LF 줄바꿈으로 둔다(Windows에서 받아도 동일).
+*.sh text eol=lf
+deploy/kubernetes/** text eol=lf
+Dockerfile text eol=lf

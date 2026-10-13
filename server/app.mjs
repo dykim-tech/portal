@@ -94,9 +94,11 @@ export function createPortal(options = {}) {
   const app = express();
   const instanceId = randomBytes(12).toString('hex');
   const maintenance = { restoring: false };
-  const origin = new URL(options.origin ?? process.env.APP_ORIGIN ?? 'http://localhost:3000').origin;
+  // APP_ORIGIN은 쉼표로 여러 주소를 줄 수 있다(예: 공인 IP와 사내 IP). 요청 출처(Origin)가 이 중 하나여야 한다.
+  const origins = String(options.origin ?? process.env.APP_ORIGIN ?? 'http://localhost:3000').split(',').map(value => value.trim()).filter(Boolean).map(value => new URL(value).origin);
+  const allowedOrigins = new Set(origins);
   const secure = options.secure ?? process.env.COOKIE_SECURE === 'true';
-  if (process.env.NODE_ENV === 'production' && (!secure || !origin.startsWith('https://'))) throw new Error('Production requires HTTPS APP_ORIGIN and COOKIE_SECURE=true.');
+  if (process.env.NODE_ENV === 'production' && (!secure || origins.some(value => !value.startsWith('https://')))) throw new Error('Production requires HTTPS APP_ORIGIN and COOKIE_SECURE=true.');
   if (process.env.TRUST_PROXY === 'true') app.set('trust proxy', 1);
   const tokenPath = join(dataDir, 'setup-token.txt');
   let setupToken;
@@ -109,7 +111,7 @@ export function createPortal(options = {}) {
   app.use(helmet({ strictTransportSecurity: secure ? undefined : false, contentSecurityPolicy: { directives: { 'upgrade-insecure-requests': secure ? [] : null, 'script-src': ["'self'"], 'style-src': ["'self'"], 'img-src': ["'self'", 'data:'] } } }));
   app.use('/api', (req, res, next) => {
     res.set('Cache-Control', 'no-store');
-    if (!['GET','HEAD','OPTIONS'].includes(req.method) && (req.get('Origin') !== origin || req.get('X-Portal-Request') !== '1')) return res.status(403).json({ error: '요청 출처를 확인할 수 없습니다. 설정된 포털 주소로 접속해 주세요.' });
+    if (!['GET','HEAD','OPTIONS'].includes(req.method) && (!allowedOrigins.has(req.get('Origin')) || req.get('X-Portal-Request') !== '1')) return res.status(403).json({ error: '요청 출처를 확인할 수 없습니다. 설정된 포털 주소로 접속해 주세요.' });
     next();
   });
   app.use(express.json({ limit: '128kb' }));
@@ -315,7 +317,8 @@ export function createPortal(options = {}) {
   registerMeetings(app, { db, requireRole, upload });
   registerDrafts(app, { db, requireRole, upload });
   registerProjects(app, { db, requireRole });
-  const selfCheck = options.selfCheck === false ? null : createSelfCheck({ dataDir });
+  // 컨테이너(Kubernetes)에는 테스트·git이 없으므로 PORTAL_SELF_CHECK=off로 점검 기능을 끈다.
+  const selfCheck = options.selfCheck === false || process.env.PORTAL_SELF_CHECK === 'off' ? null : createSelfCheck({ dataDir });
   registerOperations(app, { db, requireRole, instanceId, selfCheck });
   registerUsage(app, { db, requireRole, dataDir, backupDir });
   registerLeave(app, { db, requireRole });

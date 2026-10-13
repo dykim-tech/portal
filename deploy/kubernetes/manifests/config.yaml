@@ -1,0 +1,57 @@
+apiVersion: v1
+kind: ConfigMap
+metadata: { name: portal-env, namespace: dykim-portal }
+data:
+  NODE_ENV: production
+  # 포털 앱은 파드 안에서만 듣고(127.0.0.1), 외부 접속은 같은 파드의 nginx(HTTPS)가 받는다.
+  HOST: 127.0.0.1
+  PORT: "3000"
+  # 브라우저 주소창에 쓰는 주소. 여러 개면 쉼표로 구분(공인 IP, 사내 IP 등).
+  APP_ORIGIN: "__APP_ORIGIN__"
+  COOKIE_SECURE: "true"
+  # nginx 한 단계만 거치므로 1단계 프록시만 신뢰한다(로그인 시도 제한이 실제 접속 IP 기준으로 동작).
+  TRUST_PROXY: "true"
+  DATA_DIR: /app/data
+  BACKUP_DIR: /app/backups
+  TZ: Asia/Seoul
+  # DB 연결 오류 시 파드를 다시 시작해 복구한다(감독 프로세스 대신 Kubernetes가 재시작).
+  PORTAL_RESTART_ON_DB_FAILURE: "true"
+  # 컨테이너에는 테스트·git이 없으므로 코드 자동 점검은 끈다.
+  PORTAL_SELF_CHECK: "off"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata: { name: portal-nginx, namespace: dykim-portal }
+data:
+  default.conf: |
+    # 80 → 443 이동
+    server {
+      listen 8080;
+      server_tokens off;
+      location / { return 301 https://$host$request_uri; }
+    }
+    server {
+      listen 8443 ssl;
+      http2 on;
+      server_tokens off;
+      ssl_certificate     /etc/nginx/tls/tls.crt;
+      ssl_certificate_key /etc/nginx/tls/tls.key;
+      ssl_protocols TLSv1.2 TLSv1.3;
+      ssl_session_cache shared:SSL:10m;
+      # 대용량 첨부 업로드·다운로드: 크기 제한 없음, 바로 흘려보내기, 긴 시간 허용
+      client_max_body_size 0;
+      proxy_request_buffering off;
+      proxy_buffering off;
+      proxy_read_timeout 3600s;
+      proxy_send_timeout 3600s;
+      send_timeout 3600s;
+      location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        # 접속자 IP는 덮어써서 전달(위조된 X-Forwarded-For를 그대로 넘기지 않음)
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-Proto https;
+      }
+    }

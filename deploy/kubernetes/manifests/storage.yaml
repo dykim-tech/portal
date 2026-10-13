@@ -1,0 +1,84 @@
+# 서버 1대(단일 노드)용 로컬 저장소. SQLite는 네트워크 디스크가 아닌 로컬 디스크에 두어야 한다.
+# 실제 위치: /srv/dykim-portal/data(DB·첨부), /srv/dykim-portal/backups(백업), /srv/dykim-portal/shared(휴가 엑셀 등 공유 파일)
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: dykim-local
+provisioner: kubernetes.io/no-provisioner
+volumeBindingMode: WaitForFirstConsumer
+reclaimPolicy: Retain
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: dykim-portal-data
+spec:
+  capacity: { storage: 100Gi }
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: dykim-local
+  local: { path: /srv/dykim-portal/data }
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - { key: kubernetes.io/hostname, operator: In, values: ["__NODE_NAME__"] }
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: dykim-portal-backups
+spec:
+  capacity: { storage: 200Gi }
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: dykim-local
+  local: { path: /srv/dykim-portal/backups }
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - { key: kubernetes.io/hostname, operator: In, values: ["__NODE_NAME__"] }
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: dykim-portal-shared
+spec:
+  capacity: { storage: 5Gi }
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: dykim-local
+  local: { path: /srv/dykim-portal/shared }
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - { key: kubernetes.io/hostname, operator: In, values: ["__NODE_NAME__"] }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: { name: portal-data, namespace: dykim-portal }
+spec:
+  storageClassName: dykim-local
+  accessModes: [ReadWriteOnce]
+  volumeName: dykim-portal-data
+  resources: { requests: { storage: 100Gi } }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: { name: portal-backups, namespace: dykim-portal }
+spec:
+  storageClassName: dykim-local
+  accessModes: [ReadWriteOnce]
+  volumeName: dykim-portal-backups
+  resources: { requests: { storage: 200Gi } }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: { name: portal-shared, namespace: dykim-portal }
+spec:
+  storageClassName: dykim-local
+  accessModes: [ReadWriteOnce]
+  volumeName: dykim-portal-shared
+  resources: { requests: { storage: 5Gi } }

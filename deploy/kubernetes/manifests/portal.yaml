@@ -1,0 +1,86 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: portal
+  namespace: dykim-portal
+  labels: { app: dykim-portal }
+spec:
+  # SQLite 한 파일을 쓰므로 반드시 1개만 실행하고, 교체 시 기존 파드를 먼저 내린다.
+  replicas: 1
+  strategy: { type: Recreate }
+  selector: { matchLabels: { app: dykim-portal } }
+  template:
+    metadata:
+      labels: { app: dykim-portal }
+    spec:
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: portal
+          image: __IMAGE__
+          imagePullPolicy: Never
+          envFrom: [{ configMapRef: { name: portal-env } }]
+          securityContext:
+            runAsUser: 1000
+            runAsGroup: 1000
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }
+          resources:
+            requests: { cpu: 250m, memory: 512Mi }
+            limits: { memory: 4Gi }
+          startupProbe:
+            exec: { command: [node, -e, "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"] }
+            periodSeconds: 5
+            failureThreshold: 120
+          livenessProbe:
+            exec: { command: [node, -e, "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"] }
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 4
+          readinessProbe:
+            exec: { command: [node, -e, "fetch('http://127.0.0.1:3000/api/health').then(r=>r.json()).then(b=>process.exit(b.database==='ok'?0:1)).catch(()=>process.exit(1))"] }
+            periodSeconds: 15
+            timeoutSeconds: 10
+          volumeMounts:
+            - { name: data, mountPath: /app/data }
+            - { name: backups, mountPath: /app/backups }
+            - { name: shared, mountPath: /app/shared }
+        - name: https
+          image: docker.io/nginxinc/nginx-unprivileged:stable-alpine
+          imagePullPolicy: IfNotPresent
+          ports:
+            # 서버의 80·443 포트를 이 컨테이너로 연결한다(외부 접속 입구).
+            - { name: http, containerPort: 8080, hostPort: 80, protocol: TCP }
+            - { name: https, containerPort: 8443, hostPort: 443, protocol: TCP }
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }
+          resources:
+            requests: { cpu: 50m, memory: 32Mi }
+            limits: { memory: 256Mi }
+          readinessProbe:
+            tcpSocket: { port: 8443 }
+            periodSeconds: 10
+          volumeMounts:
+            - { name: nginx-conf, mountPath: /etc/nginx/conf.d }
+            - { name: tls, mountPath: /etc/nginx/tls, readOnly: true }
+      volumes:
+        - { name: data, persistentVolumeClaim: { claimName: portal-data } }
+        - { name: backups, persistentVolumeClaim: { claimName: portal-backups } }
+        - { name: shared, persistentVolumeClaim: { claimName: portal-shared } }
+        - { name: nginx-conf, configMap: { name: portal-nginx } }
+        - { name: tls, secret: { secretName: portal-tls } }
+---
+# 클러스터 안에서 접근할 때 쓰는 내부 주소(외부 접속은 서버 80·443 포트)
+apiVersion: v1
+kind: Service
+metadata: { name: portal, namespace: dykim-portal }
+spec:
+  selector: { app: dykim-portal }
+  ports:
+    - { name: https, port: 443, targetPort: 8443 }

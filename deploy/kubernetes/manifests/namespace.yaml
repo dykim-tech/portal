@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: dykim-portal
+  labels:
+    # 외부 접속 입구로 서버의 80·443 포트(hostPort)를 쓰므로 baseline 정책은 적용할 수 없다.
+    # 대신 각 컨테이너는 root가 아닌 사용자로, 권한 상승 없이, 모든 커널 권한을 뺀 채 실행한다(portal.yaml).
+    pod-security.kubernetes.io/enforce: privileged
+    pod-security.kubernetes.io/warn: baseline
