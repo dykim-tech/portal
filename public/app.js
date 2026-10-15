@@ -29,6 +29,7 @@ const externalTools=[
   {name:'ChatGPT',url:'https://chatgpt.com/',description:'OpenAI AI 어시스턴트'},
   {name:'Google Drive',url:'https://drive.google.com/',description:'Google 클라우드 파일 저장소'},
   {name:'Notion',url:'https://www.notion.so/',description:'문서·메모·업무 관리 워크스페이스'},
+  {name:'윌라 - 독서의 모든 것',url:'https://www.welaaa.com/ebook',description:'오디오북·전자책 독서'},
   // 이 PC에 설치된 Obsidian 앱을 obsidian:// 주소로 실행한다(웹 서비스가 아니므로 새 탭을 열지 않음).
   {name:'Obsidian',url:'obsidian://open',description:'메모·지식 관리 (이 PC의 Obsidian 앱 실행)',app:true},
   // VS Code는 설치 때 등록된 vscode: 주소로 실행한다.
