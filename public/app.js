@@ -187,11 +187,38 @@ function applyColumnWidths(table,widths){
   if(table.dataset.lastNatural)natural[natural.length-1]=Number(table.dataset.lastNatural);
   table.classList.add('columns-sized');
   const sizes=headers.map((header,index)=>Math.max(header.classList.contains('select-cell')?natural[index]:COLUMN_MIN_WIDTH,Math.round(widths[columnKey(header)]??natural[index])));
-  const total=sizes.reduce((sum,size)=>sum+size,0),room=(table.parentElement?.clientWidth??total)-total;
+  const available=table.parentElement?.clientWidth||0;
+  let total=sizes.reduce((sum,size)=>sum+size,0);
+  // 열마다 최소 너비: 머리글 글자가 한 줄로 보이는 너비, 한 줄로 쓰는 칸(날짜·담당자·상태·버튼 등)은 내용 너비(최대 180px).
+  // 제목처럼 줄바꿈되는 칸은 220px을 보장한다. 저장한 너비가 이보다 좁으면 최소 너비로 넓혀 보여 준다.
+  const rows=[...(table.tBodies[0]?.rows??[])].slice(0,10);
+  const minimum=headers.map((header,index)=>{
+    if(header.classList.contains('select-cell'))return sizes[index];
+    let need=Math.max(COLUMN_MIN_WIDTH,Math.ceil(labelWidth(header)+horizontalPadding(header)+8));
+    for(const row of rows){const cell=row.cells[index];if(!cell)continue;need=Math.max(need,cell.querySelector(':scope > .link-button')?220:Math.min(180,Math.ceil(contentWidth(cell)+horizontalPadding(cell)+6)));}
+    return need;
+  });
+  for(let index=0;index<sizes.length;index++)sizes[index]=Math.max(sizes[index],minimum[index]);
+  total=sizes.reduce((sum,size)=>sum+size,0);
+  // 합이 화면보다 넓으면(화면 크기·메뉴 접기 등) 잘리지 않게 한 화면에 맞춘다(줄인 너비는 저장하지 않음).
+  if(available&&total>available){
+    // 각 열의 '최소 너비를 넘는 부분'을 같은 비율로 줄인다(제목처럼 넓은 열이 가장 많이 줄어듦).
+    const spare=sizes.reduce((sum,size,index)=>sum+size-minimum[index],0),excess=total-available;
+    if(spare>0){const ratio=Math.min(1,excess/spare);for(let index=0;index<sizes.length;index++)sizes[index]=Math.floor(sizes[index]-(sizes[index]-minimum[index])*ratio);total=sizes.reduce((sum,size)=>sum+size,0);}
+    // 화면이 아주 좁아 최소 너비 합도 넘치면 모든 열을 같은 비율로 줄인다(일부 칸은 … 으로 표시).
+    if(total>available){const scale=available/total;for(let index=0;index<sizes.length;index++)sizes[index]=Math.max(COLUMN_MIN_WIDTH,Math.floor(sizes[index]*scale));total=sizes.reduce((sum,size)=>sum+size,0);}
+  }
+  const room=available?available-total:0;
   if(room>0)sizes[sizes.length-1]+=room;
   headers.forEach((header,index)=>{header.style.width=sizes[index]+'px';});
-  table.style.width=Math.max(total,total+room)+'px';
+  table.style.width=(total+Math.max(0,room))+'px';
 }
+// 머리글 글자(정렬 표시 포함)가 한 줄로 차지하는 실제 너비
+function horizontalPadding(element){const style=getComputedStyle(element);return (parseFloat(style.paddingLeft)||0)+(parseFloat(style.paddingRight)||0);}
+function contentWidth(cell){if(!cell)return 0;const range=document.createRange();range.selectNodeContents(cell);const width=range.getBoundingClientRect().width;range.detach?.();return width;}
+function labelWidth(header){const label=header.querySelector('.sort-heading')??header;const range=document.createRange();range.selectNodeContents(label);const width=range.getBoundingClientRect().width;range.detach?.();return width;}
+// 표가 들어 있는 영역의 너비가 바뀌면(창 크기, 왼쪽 메뉴·고객 목록 접기) 저장된 열 너비를 다시 맞춘다.
+const columnFitObserver=typeof ResizeObserver==='function'?new ResizeObserver(entries=>{for(const entry of entries){const table=entry.target.querySelector(':scope > table.columns-sized');if(table?._columnWidths&&!table.classList.contains('column-resizing'))applyColumnWidths(table,table._columnWidths);}}):null;
 function enableColumnResize(table,kind){
   const headRow=table?.tHead?.rows[0];if(!headRow)return;
   const headers=[...headRow.cells];if(headers.length<2)return;
@@ -222,6 +249,7 @@ function enableColumnResize(table,kind){
     header.append(handle);
   });
   applyColumnWidths(table,widths);
+  if(table.parentElement&&!table.parentElement._fitObserved){table.parentElement._fitObserved=true;columnFitObserver?.observe(table.parentElement);}
 }
 // 모든 화면과 대화창의 표에 열 너비 조정을 자동으로 붙인다. 표 종류별(화면·순서) 너비를 따로 저장한다.
 function resizeKindFor(table,index,inDialog){
