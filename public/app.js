@@ -3,7 +3,7 @@ import { createManagement } from './management.js';
 import { createMeetings } from './meetings.js';
 import { createDrafts } from './drafts.js';
 import { notificationHtml } from './notifications.js';
-import { orderedMenuIds, moveMenuId } from './navigation.js';
+import { orderedMenuIds, moveMenuId, visibleMenuIds } from './navigation.js';
 const root=document.querySelector('#app'), modal=document.querySelector('#modal');
 const esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const labels={general:'일반 비품',it:'IT 장비',active:'사용 중',stored:'보관 중',repair:'점검·수리',retired:'사용 종료',admin:'관리자',editor:'편집자',viewer:'조회자',upcoming:'기한 예정',today:'오늘 기한',overdue:'기한 경과'};
@@ -18,6 +18,9 @@ const canEdit=()=>['admin','editor'].includes(state.user?.role);
 const options=(values,selected)=>values.map(v=>`<option value="${v}" ${v===selected?'selected':''}>${labels[v]??v}</option>`).join('');
 let toastTimer, pollTimer;
 let sidebarMenus=[],sidebarMenuOrder=[];
+// 포털 전체 메뉴 표시 설정: 관리자가 숨긴 메뉴 id(서버 app_settings 'menus'). 로그인 정보와 함께 받는다.
+let hiddenMenus=[];
+const shownMenuOrder=()=>visibleMenuIds(sidebarMenuOrder,hiddenMenus);
 const sidebarMenuKey=()=>`portal-sidebar-menu-${state.user.id}`;
 // 메뉴 순서는 사용자 계정(서버)에 저장하고, 이 브라우저에도 사본을 남긴다.
 function saveSidebarMenu(){try{localStorage.setItem(sidebarMenuKey(),JSON.stringify(sidebarMenuOrder));}catch{}if(state.user)state.user.menu_order=[...sidebarMenuOrder];api('/auth/menu-order',{method:'PUT',body:{order:sidebarMenuOrder}}).catch(error=>toast('메뉴 순서를 저장하지 못했습니다. '+error.message));}
@@ -38,19 +41,27 @@ const externalTools=[
 function renderTools(){
   document.querySelector('#content').innerHTML=pageHead('TOOLS','도구','자주 쓰는 웹 도구와 PC 앱을 바로 엽니다.')+`<section class="panel tools-panel"><div class="tools-grid">${externalTools.map(tool=>`<a class="tool-card" href="${esc(tool.url)}" ${tool.app?'':'target="_blank" rel="noopener noreferrer"'}><span class="tool-initial" aria-hidden="true">${esc(tool.name.slice(0,1).toUpperCase())}</span><span class="tool-text"><strong>${esc(tool.name)}</strong><small>${esc(tool.description)}</small><small class="tool-url">${tool.app?'PC 앱 실행':esc(tool.url.replace(/^https:\/\//,'').replace(/\/$/,''))+' ↗'}</small></span></a>`).join('')}</div></section><p class="help-line">웹 도구는 새 탭에서 열리며 인터넷 연결과 해당 서비스 계정이 필요합니다. 'PC 앱 실행' 도구(Obsidian·Visual Studio Code)는 이 PC에 설치된 앱을 실행하며, 처음 누를 때 브라우저가 앱 열기를 물으면 허용하세요.</p>`;
 }
+async function saveHiddenMenus(next){
+  const saved=await api('/menu-settings',{method:'PUT',body:{hidden:next}});
+  hiddenMenus=saved.hidden;state.user.hidden_menus=[...saved.hidden];
+  renderSidebarMenu();renderSettingsMenu();
+  toast(saved.hidden.length?`메뉴 ${saved.hidden.length}개를 숨겼습니다. 모든 사용자에게 적용됩니다.`:'모든 메뉴를 표시합니다.');
+}
 function renderSidebarMenu(){
   const nav=document.querySelector('#sidebar-nav');if(!nav)return;
   const names=new Map(sidebarMenus);
-  nav.innerHTML=sidebarMenuOrder.map(id=>`<button type="button" data-view="${id}">${esc(names.get(id))}</button>`).join('');
+  nav.innerHTML=shownMenuOrder().map(id=>`<button type="button" data-view="${id}">${esc(names.get(id))}</button>`).join('');
   // 상단 가로 메뉴도 설정에서 정한 순서를 똑같이 따른다.
   const top=document.querySelector('.horizontal-nav');
-  if(top)top.innerHTML=sidebarMenuOrder.map(id=>`<button data-view="${id}">${esc(names.get(id))}</button>`).join('');
+  if(top)top.innerHTML=shownMenuOrder().map(id=>`<button data-view="${id}">${esc(names.get(id))}</button>`).join('');
   updateNav();
 }
 function renderSettingsMenu(){
   const container=document.querySelector('#settings-menu-order');if(!container)return;
   const names=new Map(sidebarMenus);
-  container.innerHTML=`<div class="settings-menu-list">${sidebarMenuOrder.map((id,index)=>{const name=esc(names.get(id));return `<div class="settings-menu-row"><span>${name}</span><button type="button" class="small" data-action="menu-up" data-id="${id}" aria-label="${name} 위로 이동" ${index===0?'disabled':''}>↑</button><button type="button" class="small" data-action="menu-down" data-id="${id}" aria-label="${name} 아래로 이동" ${index===sidebarMenuOrder.length-1?'disabled':''}>↓</button></div>`;}).join('')}</div><button type="button" data-action="menu-reset">기본 순서로 되돌리기</button>`;
+  // 관리자: 모든 메뉴에 '표시' 체크 상자(포털 전체 적용). 그 밖의 사용자: 보이는 메뉴의 순서만 편집.
+  const admin=state.user.role==='admin',list=admin?sidebarMenuOrder:shownMenuOrder(),hidden=new Set(hiddenMenus);
+  container.innerHTML=`${admin?'<p class="help-line settings-menu-help">체크한 메뉴만 모든 사용자의 왼쪽·상단 메뉴에 표시됩니다. 설정 메뉴는 항상 표시됩니다.</p>':''}<div class="settings-menu-list ${admin?'with-visibility':''}">${list.map((id,index)=>{const name=esc(names.get(id)),off=hidden.has(id)&&id!=='settings';return `<div class="settings-menu-row ${off?'menu-off':''}">${admin?`<label class="menu-visible" title="${name} 메뉴 표시"><input type="checkbox" data-menu-visible="${id}" ${off?'':'checked'} ${id==='settings'?'disabled':''} aria-label="${name} 메뉴 표시"></label>`:''}<span>${name}${off?' <small>숨김</small>':''}</span><button type="button" class="small" data-action="menu-up" data-id="${id}" aria-label="${name} 위로 이동" ${index===0?'disabled':''}>↑</button><button type="button" class="small" data-action="menu-down" data-id="${id}" aria-label="${name} 아래로 이동" ${index===list.length-1?'disabled':''}>↓</button></div>`;}).join('')}</div><div class="settings-menu-actions"><button type="button" data-action="menu-reset">기본 순서로 되돌리기</button>${admin?'<button type="button" data-action="menu-show-all">모든 메뉴 표시</button>':''}</div>`;
 }
 // 브라우저 뒤로가기 처리: 포털 화면 이동을 브라우저 기록에 남기고, 대시보드 아래에 '보호 기록'을 하나 둔다.
 // 뒤로가기가 보호 기록에 닿으면 다시 대시보드로 돌려 놓아 포털 밖으로 나가지 않는다. 창이 열려 있으면 뒤로가기는 창만 닫는다.
@@ -104,6 +115,7 @@ function authPage(setup){
 function shell(){
   const menus=[['dashboard','대시보드'],['meetings','회의록'],['drafts','업무기안'],['installations','설치관리'],['projects','프로젝트 관리'],['library','자료 관리'],['items','자산 관리'],['todos','TO-DO List'],['work','업무관리'],['reports','리포트'],['tools','도구'],['outlook','Mail'],['gracecns','GRACECNS'],['nas','NAS'],['nasadmin','NAS 관리자 설정'],['settings','설정']];
   sidebarMenus=menus;
+  hiddenMenus=Array.isArray(state.user.hidden_menus)?state.user.hidden_menus.filter(id=>id!=='settings'):[];
   const defaults=sidebarMenus.map(([view])=>view);
   let local=null;try{local=JSON.parse(localStorage.getItem(sidebarMenuKey()));}catch{}
   const saved=Array.isArray(state.user.menu_order)?state.user.menu_order:local;
@@ -733,10 +745,11 @@ document.addEventListener('click',async event=>{
     if(action==='nas-refresh'){const panel=button.closest('.dashboard-nas'),open=panel?.querySelector('.nas-detail')?.hidden===false;button.disabled=true;try{let n;try{n=await api('/nas?refresh=1');}catch(error){n={configured:true,error:error.message};}if(panel?.isConnected)panel.innerHTML=nasPanel(n,open);}finally{if(button.isConnected)button.disabled=false;}return;}
     if(action==='nas-settings'){const s=await api('/nas/settings');openDialog('NAS 연동 (openmediavault)',`<form id="nas-settings-form" class="form-grid"><div class="full">${input('url','NAS 관리 화면 주소',s.url,'maxlength="300" placeholder="http://100.116.94.33:8088"')}</div>${input('username','NAS 관리자 아이디',s.username,'maxlength="100" autocomplete="off"')}${input('password',s.has_password?'NAS 관리자 비밀번호 (비워 두면 기존 비밀번호 유지)':'NAS 관리자 비밀번호','','type="password" maxlength="256" autocomplete="new-password"')}<p class="help-line full">포털 서버가 이 계정으로 NAS에 로그인해 파일시스템·공유 볼륨·사용자 목록을 읽기만 합니다(설정 변경 없음). 비밀번호는 암호화해 포털 서버에만 저장하며 화면에 다시 표시하지 않습니다. 세 칸을 모두 비우고 저장하면 연동을 해제합니다.</p><div class="form-actions full"><button type="button" data-action="close">취소</button><button class="primary" type="submit">저장 후 연결 확인</button></div></form>`);return;}
     if(action==='leave-settings'){const s=await api('/leave/settings');openDialog('휴가 현황 연동',`<form id="leave-settings-form" class="form-grid"><div class="full">${input('file','휴가 엑셀 파일 경로 (.xlsx/.xlsm)',s.file,'maxlength="500"')}</div><div class="full">${input('employee','대시보드에 표시할 사원명',s.employee,'maxlength="50"')}</div><p class="help-line full">포털 서버가 이 파일을 읽기만 합니다(수정하지 않음). 두 칸을 모두 비우고 저장하면 대시보드에서 휴가 현황을 숨깁니다.</p><div class="form-actions full"><button type="button" data-action="close">취소</button><button class="primary" type="submit">저장</button></div></form>`);return;}
+    if(action==='menu-show-all'){if(state.view!=='settings'||state.user.role!=='admin')return;await saveHiddenMenus([]);document.querySelector('[data-action="menu-show-all"]')?.focus();return;}
     if(action==='menu-reset'){if(state.view!=='settings')return;sidebarMenuOrder=sidebarMenus.map(([view])=>view);saveSidebarMenu();renderSidebarMenu();renderSettingsMenu();document.querySelector('[data-action="menu-reset"]')?.focus();return;}
     if(action==='menu-up'||action==='menu-down'){
       if(state.view!=='settings')return;
-      sidebarMenuOrder=moveMenuId(sidebarMenuOrder,id,action==='menu-up'?-1:1);
+      sidebarMenuOrder=moveMenuId(sidebarMenuOrder,id,action==='menu-up'?-1:1,state.user.role==='admin'?sidebarMenuOrder:shownMenuOrder());
       saveSidebarMenu();renderSidebarMenu();renderSettingsMenu();
       document.querySelector(`[data-action="${action}"][data-id="${id}"]`)?.focus();return;
     }
@@ -769,7 +782,7 @@ document.addEventListener('click',async event=>{
     if(action==='refresh-notifications')await renderNotifications();
   }catch(error){if(modal.open)document.querySelector('#dialog-error').textContent=error.message;else toast(error.message);}
 });
-document.addEventListener('change',async event=>{const todo=event.target.closest('input[data-todo-toggle]');if(todo){try{await extras.toggleTodo(todo);}catch(error){todo.checked=!todo.checked;toast(error.message);}return;}try{if(await meetings.change(event.target))return;if(await management.change(event.target))return;}catch(error){toast(error.message);}const select=event.target.closest('select[data-page-size]');if(!select)return;const kind=select.dataset.pageSize,size=Number(select.value);if(!allowedPageSizes.includes(size)||!tableState[kind])return;try{tableState[kind].size=size;try{localStorage.setItem('portal-page-size-'+kind,String(size));}catch{}resetListingPage(kind);await renderView();}catch(error){toast(error.message);}});
+document.addEventListener('change',async event=>{const menuBox=event.target.closest('input[data-menu-visible]');if(menuBox){const id=menuBox.dataset.menuVisible,next=menuBox.checked?hiddenMenus.filter(item=>item!==id):[...hiddenMenus,id];try{await saveHiddenMenus(next);}catch(error){menuBox.checked=!menuBox.checked;toast('메뉴 표시를 저장하지 못했습니다. '+error.message);}document.querySelector(`input[data-menu-visible="${id}"]`)?.focus();return;}const todo=event.target.closest('input[data-todo-toggle]');if(todo){try{await extras.toggleTodo(todo);}catch(error){todo.checked=!todo.checked;toast(error.message);}return;}try{if(await meetings.change(event.target))return;if(await management.change(event.target))return;}catch(error){toast(error.message);}const select=event.target.closest('select[data-page-size]');if(!select)return;const kind=select.dataset.pageSize,size=Number(select.value);if(!allowedPageSizes.includes(size)||!tableState[kind])return;try{tableState[kind].size=size;try{localStorage.setItem('portal-page-size-'+kind,String(size));}catch{}resetListingPage(kind);await renderView();}catch(error){toast(error.message);}});
 document.addEventListener('change',async event=>{if(event.target.id!=='library-folder-picker'||!event.target.files.length)return;const input=event.target,picked=folderPickerItems(input.files),target=features.uploadTarget!==undefined?features.uploadTarget:features.folder??null;features.uploadTarget=undefined;try{await uploadLibraryTree(picked,target);}catch(error){toast(error.message);}finally{input.value='';}});
 document.addEventListener('change',event=>{const box=event.target.closest('input[data-bulk-id]');if(!box||!bulkMode)return;if(box.checked)bulkMode.selected.add(box.dataset.bulkId);else bulkMode.selected.delete(box.dataset.bulkId);updateBulkUI();});
 document.addEventListener('submit',async event=>{
@@ -1079,7 +1092,7 @@ async function previewDialog(id){
 function renderSettings(){
  const dark=document.documentElement.dataset.theme==='dark';
  document.querySelector('#content').innerHTML=pageHead('PREFERENCES','설정','작업 환경과 계정 설정을 관리하세요.')+`${state.user.role==='admin'?`<section class="panel settings-panel"><div class="panel-head"><h2>관리자 메뉴</h2><small>관리자 계정에만 표시됩니다.</small></div><div class="settings-admin-links"><button class="settings-admin-link" data-view="users"><strong>사용자 관리</strong><small>계정 추가·수정·비활성화, 권한과 비밀번호 재설정</small></button><button class="settings-admin-link" data-view="backups"><strong>백업/복구</strong><small>온라인 백업 생성·다운로드, 선택한 시점으로 복구</small></button><button class="settings-admin-link" data-view="operations"><strong>운영관리</strong><small>서버 상태·건수 확인, 설계도·화면 디자인·운영자 매뉴얼(PDF)</small></button><button class="settings-admin-link" data-view="usage"><strong>사용량 관리</strong><small>드라이브 여유 공간, 데이터베이스·백업·첨부파일 용량</small></button><button class="settings-admin-link" data-action="leave-settings"><strong>휴가 현황 연동</strong><small>연차·휴가 엑셀 파일 경로와 대시보드에 표시할 사원명</small></button><button class="settings-admin-link" data-action="nas-settings"><strong>NAS 연동</strong><small>openmediavault 주소와 관리자 계정 (대시보드 NAS 현황)</small></button></div></section>`:''}<section class="panel settings-panel"><div class="panel-head"><h2>바로가기</h2></div><div class="settings-admin-links"><a class="settings-admin-link settings-external-link" href="https://github.com/dykim-tech/portal" target="_blank" rel="noopener"><strong>GitHub 저장소</strong><small>포털 프로그램 코드와 변경 기록 (새 탭에서 열기)</small></a></div></section><section class="panel settings-panel"><div class="panel-head"><h2>화면 모드</h2><small>이 브라우저에 저장됩니다.</small></div><div class="theme-options"><button class="theme-option ${!dark?'selected':''}" data-action="theme" data-mode="light" aria-pressed="${!dark}"><span class="theme-swatch light-swatch">Aa</span><strong>일반 모드</strong><small>밝은 배경의 기본 화면</small></button><button class="theme-option ${dark?'selected':''}" data-action="theme" data-mode="dark" aria-pressed="${dark}"><span class="theme-swatch dark-swatch">Aa</span><strong>다크 모드</strong><small>눈부심이 적은 어두운 화면</small></button></div></section><section class="panel settings-panel"><div class="panel-head"><h2>내 계정</h2></div><div class="settings-account"><div><strong>${esc(state.user.name)}</strong><p class="muted">${esc(state.user.email)} · ${labels[state.user.role]}</p></div><button data-action="password">비밀번호 변경</button></div></section>`;
- document.querySelector('#content .theme-options').closest('.settings-panel').insertAdjacentHTML('afterend','<section class="panel settings-panel"><div class="panel-head"><h2>메뉴 순서 편집</h2><small>왼쪽·상단 메뉴 순서 · 내 계정에 저장됩니다.</small></div><div id="settings-menu-order" class="settings-menu-order"></div></section>');
+ document.querySelector('#content .theme-options').closest('.settings-panel').insertAdjacentHTML('afterend','<section class="panel settings-panel"><div class="panel-head"><h2>메뉴 표시·순서 편집</h2><small>'+(state.user.role==='admin'?'표시 여부는 포털 전체, 순서는 내 계정에 저장됩니다.':'왼쪽·상단 메뉴 순서 · 내 계정에 저장됩니다. 표시할 메뉴는 관리자가 정합니다.')+'</small></div><div id="settings-menu-order" class="settings-menu-order"></div></section>');
  renderSettingsMenu();
 }
 async function featureAction(action,id,button){

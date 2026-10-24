@@ -19,6 +19,7 @@ import { initializeProjects, registerProjects } from './projects.mjs';
 import { registerOperations } from './operations.mjs';
 import { registerLeave } from './leave.mjs';
 import { registerNas } from './nas.mjs';
+import { createMenuSettings } from './menus.mjs';
 import { createSelfCheck } from './self-check.mjs';
 import { registerUsage } from './usage.mjs';
 import { initializeTodos, registerTodos } from './todos.mjs';
@@ -84,6 +85,9 @@ export function createPortal(options = {}) {
   recoverInterruptedRestore(dataDir);
   const backupDir = resolve(options.backupDir ?? process.env.BACKUP_DIR ?? './backups');
   const db = openDatabase(dataDir);
+  const menuSettings = createMenuSettings(db);
+  // 로그인 사용자 정보에 포털 전체 메뉴 표시 설정(숨긴 메뉴)을 함께 보낸다.
+  const userView = user => ({ ...publicUser(user), hidden_menus: menuSettings.hidden() });
   initializeFeatures(db);
   initializeUploadChunks(db);
   initializeWork(db);
@@ -150,7 +154,7 @@ export function createPortal(options = {}) {
 
   // ok는 웹 서버 응답 여부, database는 SQLite 읽기 확인 결과('ok' 또는 'error')다.
   app.get('/api/health', (_req,res) => { let database='ok'; try { db.prepare('SELECT 1 FROM users LIMIT 1').get(); } catch { database='error'; } res.json({ ok: true, database, version: 3, instance_id: instanceId, restore_result: options.restoreResult ?? null }); });
-  app.get('/api/auth/me', (req,res) => res.json({ user: req.user ? publicUser(req.user) : null, setupRequired: Boolean(setupToken) }));
+  app.get('/api/auth/me', (req,res) => res.json({ user: req.user ? userView(req.user) : null, setupRequired: Boolean(setupToken) }));
   app.post('/api/auth/setup', async (req,res) => {
     limiter(req, 'setup');
     if (!setupToken) throw fail(409, '초기 설정이 이미 완료되었습니다.');
@@ -163,7 +167,7 @@ export function createPortal(options = {}) {
     setupToken = null;
     if (existsSync(tokenPath)) unlinkSync(tokenPath);
     const user = db.prepare('SELECT * FROM users WHERE id=?').get(id);
-    session(res,user); res.status(201).json({ user: publicUser(user) });
+    session(res,user); res.status(201).json({ user: userView(user) });
   });
   app.post('/api/auth/login', async (req,res) => {
     limiter(req);
@@ -171,10 +175,11 @@ export function createPortal(options = {}) {
     const user = db.prepare('SELECT * FROM users WHERE username=? COLLATE NOCASE').get(loginId);
     const valid = await passwordMatches(req.body.password, user?.password ?? await dummyHashPromise);
     if (!valid || !user?.active) throw fail(401, '아이디 또는 비밀번호를 확인해 주세요.');
-    session(res,user); res.json({ user: publicUser(user) });
+    session(res,user); res.json({ user: userView(user) });
   });
   app.use('/api', requireAuth);
   // 메뉴 순서는 로그인한 사용자 계정에 저장해 로그아웃·다른 브라우저에서도 유지한다.
+  menuSettings.register(app, { requireRole });
   app.put('/api/auth/menu-order', (req, res) => {
     const order = req.body?.order;
     if (order !== null && (!Array.isArray(order) || order.length > 40 || order.some(id => typeof id !== 'string' || !/^[a-z]{2,24}$/.test(id)) || new Set(order).size !== order.length)) throw fail(400, '메뉴 순서를 확인해 주세요.');

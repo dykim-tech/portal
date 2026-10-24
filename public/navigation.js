@@ -16,9 +16,17 @@ export function orderedMenuIds(defaultIds, savedIds){
   return ordered;
 }
 
-export function moveMenuId(ids,id,direction){
-  const from=ids.indexOf(id),to=from+direction;
-  if(from<0||to<0||to>=ids.length)return [...ids];
+// shown: 화면에 보이는 메뉴(숨긴 메뉴 제외). 보이는 메뉴 중 바로 위·아래 메뉴와 자리를 바꾼다.
+export function moveMenuId(ids,id,direction,shown=ids){
+  const at=shown.indexOf(id),neighbor=shown[at+direction];
+  const from=ids.indexOf(id),to=ids.indexOf(neighbor);
+  if(at<0||neighbor===undefined||from<0||to<0)return [...ids];
   const next=[...ids];[next[from],next[to]]=[next[to],next[from]];
   return next;
+}
+
+// 숨긴 메뉴를 뺀 표시 순서. '설정'은 항상 보인다.
+export function visibleMenuIds(ids,hidden){
+  const set=new Set(hidden??[]);set.delete('settings');
+  return ids.filter(id=>!set.has(id));
 }

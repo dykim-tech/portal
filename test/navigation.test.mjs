@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { orderedMenuIds, moveMenuId } from '../public/navigation.js';
+import { orderedMenuIds, moveMenuId, visibleMenuIds } from '../public/navigation.js';
 
 test('saved menu order keeps permitted items once and puts newly added menus after their default predecessor',()=>{
   const defaults=['dashboard','projects','users','settings'];
@@ -23,4 +23,16 @@ test('menu move respects direction and list boundaries',()=>{
   assert.deepEqual(moveMenuId(ids,'dashboard',-1),ids);
   assert.deepEqual(moveMenuId(ids,'unknown',1),ids);
   assert.deepEqual(ids,['dashboard','projects','settings']);
+});
+
+test('hidden menus are skipped when showing and moving menus',()=>{
+  const ids=['dashboard','meetings','drafts','tools','settings'];
+  assert.deepEqual(visibleMenuIds(ids,['meetings','drafts']),['dashboard','tools','settings']);
+  assert.deepEqual(visibleMenuIds(ids,['settings','tools']),['dashboard','meetings','drafts','settings'],'settings is always shown');
+  assert.deepEqual(visibleMenuIds(ids,null),ids);
+  const shown=visibleMenuIds(ids,['meetings','drafts']);
+  // 보이는 메뉴끼리 자리를 바꾸고 숨긴 메뉴의 자리는 그대로 둔다.
+  assert.deepEqual(moveMenuId(ids,'tools',-1,shown),['tools','meetings','drafts','dashboard','settings']);
+  assert.deepEqual(moveMenuId(ids,'dashboard',-1,shown),ids);
+  assert.deepEqual(moveMenuId(ids,'meetings',1,shown),ids,'a hidden menu cannot be moved from the visible list');
 });
