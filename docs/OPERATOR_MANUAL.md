@@ -125,6 +125,10 @@ powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File '.\scripts\windows
 
 - 왼쪽·상단 메뉴의 **GRACECNS**를 누르면 회사 홈페이지 http://gracecns.com/ 이 새 탭에서 바로 열립니다. 포털 화면은 그대로 유지됩니다. 메뉴 위치는 **설정 → 메뉴 순서 편집**에서 바꿀 수 있습니다.
 
+### 4-1-3. NAS
+
+- 왼쪽·상단 메뉴의 **NAS**를 누르면 NAS 웹 화면 https://dykim-nas.duckdns.org/ 이 새 탭에서 열립니다. 포털 화면은 그대로 유지됩니다. NAS 로그인은 NAS 계정으로 합니다(포털은 NAS 계정 정보를 저장하지 않음).
+
 ### 4-2. 대시보드
 
 - 건수 카드: 등록 자산·설치 정보·등록 자료·읽지 않은 알림.
