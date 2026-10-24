@@ -18,6 +18,7 @@ import { initializeActivity, recordMutation, scanMissing, scanMonthly, activityF
 import { initializeProjects, registerProjects } from './projects.mjs';
 import { registerOperations } from './operations.mjs';
 import { registerLeave } from './leave.mjs';
+import { registerNas } from './nas.mjs';
 import { createSelfCheck } from './self-check.mjs';
 import { registerUsage } from './usage.mjs';
 import { initializeTodos, registerTodos } from './todos.mjs';
@@ -322,6 +323,7 @@ export function createPortal(options = {}) {
   registerOperations(app, { db, requireRole, instanceId, selfCheck });
   registerUsage(app, { db, requireRole, dataDir, backupDir });
   registerLeave(app, { db, requireRole });
+  registerNas(app, { db, requireRole, dataDir, fetchImpl: options.nasFetch });
   purgeOrphanChunks(db);
   registerReports(app, { db });
   const pruneBackups = registerBackups(app, { db, backupDir, requireRole, maintenance, onRestore: options.onRestore });
