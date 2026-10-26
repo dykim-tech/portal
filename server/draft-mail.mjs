@@ -64,7 +64,7 @@ const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;
 export function mailHtml({ draft, links, files, approver, cc, attachedFiles, skippedFiles }) {
   const cell = 'border:1px solid #d0d7d4;padding:8px 12px;vertical-align:top;';
   const head = cell + 'background:#eef4f1;width:110px;font-weight:bold;white-space:nowrap;';
-  const rows = [['제목', esc(draft.title)], ['기안일', esc(draft.draft_date)], ['기안자', esc(draft.drafter || '—')],
+  const rows = [...(draft.doc_no ? [['문서번호', esc(draft.doc_no)]] : []), ['제목', esc(draft.title)], ['기안일', esc(draft.draft_date)], ['기안자', esc(draft.drafter || '—')],
     ['승인 요청자', esc(`${approver.name} <${approver.email}>`)], ['참조(CC)', cc.length ? cc.map(c => esc(`${c.name} <${c.email}>`)).join('<br>') : '—']];
   const content = esc(draft.content || '(내용 없음)').replace(/\r?\n/g, '<br>');
   const linkList = links.length ? `<ul style="margin:4px 0;padding-left:20px;">${links.map(l => `<li><a href="${esc(l.url)}">${esc(l.name)}</a> <span style="color:#667;">${esc(l.url)}</span></li>`).join('')}</ul>` : '<p style="margin:4px 0;color:#667;">없음</p>';
@@ -108,7 +108,7 @@ export function createDraftMailer({ db, dataDir }) {
     ensure();
     const seq = db.prepare('SELECT COUNT(*) n FROM draft_mails WHERE draft_id=?').get(draft.id).n + 1;
     const tag = `No.${draft.id}-${seq}`;
-    const subject = `[업무기안] ${draft.title} (${tag})`.slice(0, 240);
+    const subject = `[업무기안] ${draft.doc_no ? draft.doc_no + ' ' : ''}${draft.title}`.slice(0, 240);
     const total = files.reduce((sum, f) => sum + f.size, 0), skippedFiles = total > MAX_ATTACH_BYTES;
     const mailId = Number(db.prepare('INSERT INTO draft_mails(draft_id,tag,subject,approver_email,approver_name,requested_by,created_at) VALUES(?,?,?,?,?,?,?)')
       .run(draft.id, tag, subject, approver.email, approver.name, userId, now()).lastInsertRowid);
@@ -155,7 +155,7 @@ export function createDraftMailer({ db, dataDir }) {
       const match = /^mail-(\d+)$/.exec(name); if (!match) continue;
       const dir = join(outbox, name), mailId = Number(match[1]);
       const mail = db.prepare('SELECT id,status FROM draft_mails WHERE id=?').get(mailId);
-      if (!mail) { if (!existsSync(join(dir, 'job.sending'))) rmSync(dir, { recursive: true, force: true }); continue; }
+      if (!mail) { if (!existsSync(join(dir, 'job.sending')) || existsSync(join(dir, 'result.json'))) rmSync(dir, { recursive: true, force: true }); continue; }
       if (!existsSync(join(dir, 'result.json'))) continue;
       let result; try { result = readJson(join(dir, 'result.json')); } catch { continue; }
       if (mail.status === 'queued') {

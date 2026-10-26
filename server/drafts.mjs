@@ -58,9 +58,20 @@ export function initializeDrafts(db) {
   const columns = new Set(db.prepare('PRAGMA table_info(drafts)').all().map(c => c.name));
   if (!columns.has('approver_email')) db.exec("ALTER TABLE drafts ADD COLUMN approver_email TEXT NOT NULL DEFAULT ''");
   if (!columns.has('cc_emails')) db.exec("ALTER TABLE drafts ADD COLUMN cc_emails TEXT NOT NULL DEFAULT '[]'");
+  // 문서번호: GRACECNS-RQ-<기안일 YYMMDD>-<그날 순번>. 처음 저장할 때 매기고 바꾸지 않는다(삭제된 번호는 다시 쓰지 않음).
+  if (!columns.has('doc_no')) db.exec('ALTER TABLE drafts ADD COLUMN doc_no TEXT');
+  db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS drafts_doc_no ON drafts(doc_no) WHERE doc_no IS NOT NULL;
+  CREATE TABLE IF NOT EXISTS draft_doc_counters (day TEXT PRIMARY KEY, last INTEGER NOT NULL);`);
+  for (const row of db.prepare('SELECT id,draft_date FROM drafts WHERE doc_no IS NULL ORDER BY id').all()) db.prepare('UPDATE drafts SET doc_no=? WHERE id=?').run(nextDocNo(db, row.draft_date), row.id);
   // 예전 상태(상신·승인·반려)는 '완료'로 합친다.
   db.exec("UPDATE drafts SET status='done' WHERE status IN ('submitted','approved','rejected')");
   initializeDraftMail(db);
+}
+export const DOC_PREFIX = 'GRACECNS-RQ';
+export function nextDocNo(db, draftDate) {
+  const day = String(draftDate).slice(2, 10).replace(/-/g, '');
+  const { last } = db.prepare('INSERT INTO draft_doc_counters(day,last) VALUES(?,1) ON CONFLICT(day) DO UPDATE SET last=last+1 RETURNING last').get(day);
+  return `${DOC_PREFIX}-${day}-${last}`;
 }
 const ccList = value => { try { const list = JSON.parse(value ?? '[]'); return Array.isArray(list) ? list.filter(e => typeof e === 'string') : []; } catch { return []; } };
 
@@ -98,12 +109,12 @@ export function registerDrafts(app, { db, requireRole, upload, dataDir, mailPoll
   app.get('/api/drafts', (req, res) => {
     const clauses = [], params = [];
     const q = text(req.query.q, '검색어', 200);
-    if (q) { const term = '%' + q.replace(/[\\%_]/g, '\\$&') + '%'; clauses.push("(d.title LIKE ? ESCAPE '\\' OR d.drafter LIKE ? ESCAPE '\\' OR d.content LIKE ? ESCAPE '\\')"); params.push(term, term, term); }
+    if (q) { const term = '%' + q.replace(/[\\%_]/g, '\\$&') + '%'; clauses.push("(d.title LIKE ? ESCAPE '\\' OR d.drafter LIKE ? ESCAPE '\\' OR d.content LIKE ? ESCAPE '\\' OR d.doc_no LIKE ? ESCAPE '\\')"); params.push(term, term, term, term); }
     if (req.query.status) { clauses.push('d.status=?'); params.push(status(req.query.status)); }
     const where = clauses.length ? 'WHERE ' + clauses.join(' AND ') : '';
     const page = req.query.page == null ? 1 : id(req.query.page), pageSize = 20;
     const total = db.prepare(`SELECT COUNT(*) n FROM drafts d ${where}`).get(...params).n;
-    const drafts = db.prepare(`SELECT d.id,d.title,d.draft_date,d.drafter,d.status,d.updated_at,uu.name updated_by_name,
+    const drafts = db.prepare(`SELECT d.id,d.doc_no,d.title,d.draft_date,d.drafter,d.status,d.updated_at,uu.name updated_by_name,
       (SELECT COUNT(*) FROM draft_files f WHERE f.draft_id=d.id) file_count,
       (SELECT COUNT(*) FROM draft_links l WHERE l.draft_id=d.id) link_count
       FROM drafts d LEFT JOIN users uu ON uu.id=d.updated_by ${where} ORDER BY d.draft_date DESC,d.id DESC LIMIT ? OFFSET ?`).all(...params, pageSize, (page - 1) * pageSize);
@@ -112,9 +123,12 @@ export function registerDrafts(app, { db, requireRole, upload, dataDir, mailPoll
   });
   app.get('/api/drafts/:id', (req, res) => { const row = draft(req.params.id); res.json({ draft: row, links: links(row.id), files: files(row.id), mails: mailer.mailsFor(row.id), mail_helper: mailer.helper() }); });
   app.post('/api/drafts', edit, (req, res) => {
-    const data = input(req.body), stamp = now();
-    const result = db.prepare(`INSERT INTO drafts(${Object.keys(data).join(',')},created_by,updated_by,created_at,updated_at) VALUES(${Array(Object.keys(data).length + 4).fill('?').join(',')})`).run(...Object.values(data), req.user.id, req.user.id, stamp, stamp);
-    res.status(201).json({ draft: draft(result.lastInsertRowid) });
+    const stamp = now();
+    const created = transaction(db, () => {
+      const data = { ...input(req.body), doc_no: nextDocNo(db, req.body.draft_date) };
+      return db.prepare(`INSERT INTO drafts(${Object.keys(data).join(',')},created_by,updated_by,created_at,updated_at) VALUES(${Array(Object.keys(data).length + 4).fill('?').join(',')})`).run(...Object.values(data), req.user.id, req.user.id, stamp, stamp).lastInsertRowid;
+    });
+    res.status(201).json({ draft: draft(created) });
   });
   app.put('/api/drafts/:id', edit, (req, res) => {
     const data = input(req.body, draft(req.params.id));

@@ -45,6 +45,7 @@ test('draft mail: approver/CC selection, send (status becomes done), helper resu
     const created = await request('/drafts', 'POST', { title: '장비 구매 기안', draft_date: '2026-10-26', drafter: '김동엽', content: '구매 요청', approver_email: 'JS@gracecns.com', cc_emails: ['js@gracecns.com', 'dwkang@gracecns.com'] }, editor);
     assert.equal(created.status, 201);
     const draft = created.data.draft;
+    assert.equal(draft.doc_no, 'GRACECNS-RQ-261026-1');
     assert.equal(draft.approver_email, 'js@gracecns.com'); assert.deepEqual(draft.cc_emails, ['dwkang@gracecns.com']);
 
     // 상태는 작성 중·완료 두 가지
@@ -58,7 +59,8 @@ test('draft mail: approver/CC selection, send (status becomes done), helper resu
     const mailId = sent.data.id;
     assert.equal(sent.data.mail_helper.running, false);
     const job = JSON.parse(readFileSync(join(outbox, `mail-${mailId}`, 'job.json'), 'utf8'));
-    assert.equal(job.subject, `[업무기안] 장비 구매 기안 (No.${draft.id}-1)`);
+    assert.equal(job.subject, '[업무기안] GRACECNS-RQ-261026-1 장비 구매 기안');
+    assert.ok(job.html.includes('GRACECNS-RQ-261026-1'));
     assert.deepEqual(job.to, [{ email: 'js@gracecns.com', name: '신종수 대표님' }]);
     assert.deepEqual(job.cc, [{ email: 'dwkang@gracecns.com', name: '강동우 전임' }]);
     assert.equal(job.read_receipt, false);
@@ -106,5 +108,33 @@ test('draft mail: approver/CC selection, send (status becomes done), helper resu
     assert.equal((await request(`/drafts/${draft.id}`, 'DELETE', undefined, editor)).status, 200);
     assert.equal(portal.db.prepare('SELECT COUNT(*) n FROM draft_mails').get().n, 0);
     assert.equal(readdirSync(outbox).length, 0);
+  } finally { await new Promise(r => server.close(r)); portal.db.close(); rmSync(dataDir, { recursive: true, force: true }); }
+});
+
+test('draft document numbers: GRACECNS-RQ-YYMMDD-N per draft date, never reused, searchable, backfilled', async () => {
+  const origin = 'http://localhost:3000', dataDir = mkdtempSync(join(tmpdir(), 'portal-draft-no-'));
+  let portal = createPortal({ dataDir, origin, selfCheck: false, draftMailPollMs: 0 });
+  let server = portal.app.listen(0, '127.0.0.1'); await new Promise(resolve => server.once('listening', resolve));
+  let base = `http://127.0.0.1:${server.address().port}`;
+  const request = async (path, method = 'GET', body, cookie = '') => { const r = await fetch(base + '/api' + path, { method, headers: { Origin: origin, 'X-Portal-Request': '1', 'Content-Type': 'application/json', Cookie: cookie }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }); return { status: r.status, data: await r.json().catch(() => null), cookie: r.headers.get('set-cookie')?.split(';')[0] }; };
+  try {
+    const admin = (await request('/auth/setup', 'POST', { token: readFileSync(portal.tokenPath, 'utf8'), name: '관리자', username: 'admin', email: 'admin@example.test', password: 'test-password-1234' })).cookie;
+    const make = async (title, draft_date) => (await request('/drafts', 'POST', { title, draft_date }, admin)).data.draft;
+    const a = await make('a', '2026-10-26'), b = await make('b', '2026-10-26'), c = await make('c', '2026-11-01');
+    assert.deepEqual([a.doc_no, b.doc_no, c.doc_no], ['GRACECNS-RQ-261026-1', 'GRACECNS-RQ-261026-2', 'GRACECNS-RQ-261101-1']);
+    assert.equal((await request('/drafts', 'POST', { title: 'bad', draft_date: '2026-13-01' }, admin)).status, 400);
+    // 기안일을 바꿔도 번호는 그대로, 지운 번호는 다시 쓰지 않음
+    const moved = (await request(`/drafts/${a.id}`, 'PUT', { ...a, draft_date: '2026-12-01', version: a.version }, admin)).data.draft;
+    assert.equal(moved.doc_no, 'GRACECNS-RQ-261026-1');
+    await request(`/drafts/${b.id}`, 'DELETE', undefined, admin);
+    assert.equal((await make('d', '2026-10-26')).doc_no, 'GRACECNS-RQ-261026-3');
+    const found = (await request('/drafts?q=' + encodeURIComponent('RQ-261101'), 'GET', undefined, admin)).data.drafts;
+    assert.deepEqual(found.map(d => [d.title, d.doc_no]), [['c', 'GRACECNS-RQ-261101-1']]);
+    // 예전 기안(번호 없음)은 서버가 시작할 때 번호를 매긴다
+    portal.db.prepare('UPDATE drafts SET doc_no=NULL WHERE id=?').run(c.id);
+    await new Promise(r => server.close(r)); portal.db.close();
+    portal = createPortal({ dataDir, origin, selfCheck: false, draftMailPollMs: 0 });
+    assert.equal(portal.db.prepare('SELECT doc_no FROM drafts WHERE id=?').get(c.id).doc_no, 'GRACECNS-RQ-261101-2');
+    server = portal.app.listen(0, '127.0.0.1'); await new Promise(resolve => server.once('listening', resolve));
   } finally { await new Promise(r => server.close(r)); portal.db.close(); rmSync(dataDir, { recursive: true, force: true }); }
 });

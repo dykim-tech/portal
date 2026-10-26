@@ -13,7 +13,7 @@ const sections = d => [
   ['내용', lines(d.content || '')],
   ...(d.files?.length ? [['첨부파일', d.files.map(f => `· ${f.name} (${fileSize(f.size)})`)]] : []),
 ];
-const facts = d => [['제목', d.title], ['기안일', d.draft_date], ['기안자', d.drafter || '—']];
+const facts = d => [...(d.doc_no ? [['문서번호', d.doc_no]] : []), ['제목', d.title], ['기안일', d.draft_date], ['기안자', d.drafter || '—']];
 const footer = d => `DYKIM PORTAL 업무기안 · 출력일 ${d.printed_on}`;
 export const exportFormats = { pdf: { ext: 'pdf', type: 'application/pdf', label: 'PDF' }, docx: { ext: 'docx', type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', label: 'Word' }, hwpx: { ext: 'hwpx', type: 'application/hwp+zip', label: '한글' } };
 

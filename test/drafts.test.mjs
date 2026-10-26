@@ -64,7 +64,7 @@ test('work drafts: write, links, files, status and export to PDF/Word/HWPX', asy
     const hangul = unzip(Buffer.from(await hwpx.arrayBuffer()));
     assert.equal(hangul[0].name, 'mimetype'); assert.equal(hangul[0].method, 0); assert.equal(hangul[0].text(), 'application/hwp+zip');
     const section = hangul.find(e => e.name === 'Contents/section0.xml').text();
-    assert.match(section, /<hp:secPr/); assert.match(section, /업무 기안서/); assert.match(section, /김동엽/); assert.match(section, /rowCnt="3" colCnt="2"/);
+    assert.match(section, /<hp:secPr/); assert.match(section, /업무 기안서/); assert.match(section, /김동엽/); assert.match(section, /rowCnt="4" colCnt="2"/);
     const ids = [...section.matchAll(/<hp:p id="(\d+)"/g)].map(m => m[1]);
     assert.equal(new Set(ids).size, ids.length, 'paragraph ids are unique');
 
