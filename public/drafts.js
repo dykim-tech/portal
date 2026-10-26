@@ -2,7 +2,7 @@
 // 모든 사용자가 열람하고 편집자·관리자만 작성·수정·삭제한다. 상태가 '작성 중'이 아니면 문서로 저장할 수 있다.
 export function createDrafts({ api, esc, state, canEdit, openDialog, input, toast, fmt, modal }) {
   const draftState = { filters: {}, page: 1, selected: null };
-  const statuses = { writing: '작성 중', done: '완료', submitted: '상신', approved: '승인', rejected: '반려' };
+  const statuses = { writing: '작성 중', done: '완료' };
   const formats = [['pdf', 'PDF (.pdf)'], ['docx', 'Word (.docx)'], ['hwpx', '한글 (.hwpx)']];
   const formatKey = () => `portal-draft-format-${state.user?.id ?? ''}`;
   const savedFormat = () => { try { const value = localStorage.getItem(formatKey()); return formats.some(([key]) => key === value) ? value : 'pdf'; } catch { return 'pdf'; } };
@@ -11,11 +11,8 @@ export function createDrafts({ api, esc, state, canEdit, openDialog, input, toas
   const badge = value => `<span class="badge draft-status draft-status-${value}">${statuses[value] ?? value}</span>`;
   const options = (selected, blank) => (blank ? `<option value="">${blank}</option>` : '') + Object.entries(statuses).map(([key, label]) => `<option value="${key}" ${key === selected ? 'selected' : ''}>${label}</option>`).join('');
   const host = url => { try { return new URL(url).hostname; } catch { return url; } };
-  // 승인 요청 메일: 발송 상태와 승인 요청자의 읽음 여부(접수중/접수완료)
-  const receiptLabel = { pending: '접수중', read: '접수완료', not_read: '접수중 (읽지 않고 삭제)' };
-  const mailBadge = (status, receipt) => status === 'sent' ? `<span class="badge mail-receipt mail-receipt-${receipt}">${receiptLabel[receipt] ?? '접수중'}</span>`
-    : status === 'queued' ? '<span class="badge mail-state-queued">발송 대기</span>' : status === 'failed' ? '<span class="badge mail-state-failed">발송 실패</span>'
-    : status === 'canceled' ? '<span class="badge">발송 취소</span>' : '—';
+  // 메일 발송 결과(읽음·접수 여부는 확인하지 않는다)
+  const mailState = { queued: '발송 대기', sent: '발송 완료', failed: '발송 실패', canceled: '발송 취소' };
   const person = (contacts, email) => { const c = contacts.find(item => item.email === email); return c ? `${c.name} (${c.email})` : email; };
 
   async function renderDrafts() {
@@ -23,13 +20,13 @@ export function createDrafts({ api, esc, state, canEdit, openDialog, input, toas
     const data = await api('/drafts?' + new URLSearchParams({ ...f, page: draftState.page }));
     if (state.view !== 'drafts') return;
     const pages = Math.max(1, Math.ceil(data.total / data.page_size)), filtered = Object.keys(f).length > 0;
-    const rows = data.drafts.map(row => `<tr><td class="draft-date">${esc(row.draft_date)}</td><td><button class="link-button" data-action="draft-open" data-id="${row.id}">${esc(row.title)}</button></td><td>${esc(row.drafter) || '—'}</td><td>${badge(row.status)}</td><td>${row.mail_status ? mailBadge(row.mail_status, row.mail_receipt) : '—'}</td><td>${row.file_count ? row.file_count + '개' : '—'}</td><td>${row.link_count ? row.link_count + '개' : '—'}</td><td>${esc(fmt(row.updated_at))}<span class="secondary-line">${esc(row.updated_by_name ?? '')}</span></td></tr>`).join('');
+    const rows = data.drafts.map(row => `<tr><td class="draft-date">${esc(row.draft_date)}</td><td><button class="link-button" data-action="draft-open" data-id="${row.id}">${esc(row.title)}</button></td><td>${esc(row.drafter) || '—'}</td><td>${badge(row.status)}</td><td>${row.file_count ? row.file_count + '개' : '—'}</td><td>${row.link_count ? row.link_count + '개' : '—'}</td><td>${esc(fmt(row.updated_at))}<span class="secondary-line">${esc(row.updated_by_name ?? '')}</span></td></tr>`).join('');
     const total = Object.values(data.counts).reduce((sum, n) => sum + n, 0);
     document.querySelector('#content').innerHTML = `<h1 class="sr-only">업무기안</h1>${canEdit() ? '<div class="page-head page-head-actions"><button class="primary" data-action="draft-new">＋ 기안 작성</button></div>' : ''}
       <div class="project-stats draft-stats">${[['전체', total], ...Object.entries(statuses).map(([key, label]) => [label, data.counts[key] ?? 0])].map(([label, n]) => `<div class="project-stat"><small>${label}</small><strong>${n}건</strong></div>`).join('')}</div>
       <section class="panel"><div class="panel-head"><h2>업무기안 <small>${data.total}건</small></h2><small>기안일 최신순</small></div>
       <form id="draft-filter" class="filters draft-filters"><label>검색<input name="q" placeholder="제목, 기안자, 내용" value="${esc(f.q)}"></label><label>상태<select name="status">${options(f.status, '전체 상태')}</select></label><button class="primary">조회</button><button type="button" data-action="draft-reset">초기화</button></form>
-      ${rows ? `<div class="table-wrap"><table class="drafts-table"><thead><tr><th>기안일</th><th>제목</th><th>기안자</th><th>상태</th><th>접수</th><th>첨부</th><th>링크</th><th>최근 수정</th></tr></thead><tbody>${rows}</tbody></table></div>` : `<div class="empty"><h3>${filtered ? '검색 결과가 없습니다' : '아직 작성한 기안이 없습니다'}</h3><p>${filtered ? '검색어나 상태를 바꿔 보세요.' : '기안 내용을 입력하고 자료를 첨부해 보세요. 완료 후 PDF·Word·한글 문서로 저장할 수 있습니다.'}</p>${canEdit() && !filtered ? '<button data-action="draft-new">첫 기안 작성</button>' : ''}</div>`}
+      ${rows ? `<div class="table-wrap"><table class="drafts-table"><thead><tr><th>기안일</th><th>제목</th><th>기안자</th><th>상태</th><th>첨부</th><th>링크</th><th>최근 수정</th></tr></thead><tbody>${rows}</tbody></table></div>` : `<div class="empty"><h3>${filtered ? '검색 결과가 없습니다' : '아직 작성한 기안이 없습니다'}</h3><p>${filtered ? '검색어나 상태를 바꿔 보세요.' : '기안 내용을 입력하고 자료를 첨부해 보세요. 완료 후 PDF·Word·한글 문서로 저장할 수 있습니다.'}</p>${canEdit() && !filtered ? '<button data-action="draft-new">첫 기안 작성</button>' : ''}</div>`}
       <div class="footer-row"><span>${data.total}건</span><div class="pager"><button class="small" data-action="draft-prev" ${data.page <= 1 ? 'disabled' : ''}>이전</button><span>${data.page} / ${pages}</span><button class="small" data-action="draft-next" ${data.page >= pages ? 'disabled' : ''}>다음</button></div></div></section>`;
   }
 
@@ -59,7 +56,7 @@ export function createDrafts({ api, esc, state, canEdit, openDialog, input, toas
       <label class="full">내용<textarea name="content" class="draft-content" maxlength="50000" ${off}>${esc(row.content)}</textarea></label>
       </div>${id ? `<p class="help-line">작성 ${esc(row.created_by_name ?? '')} · ${esc(fmt(row.created_at))} / 최근 수정 ${esc(row.updated_by_name ?? '')} · ${esc(fmt(row.updated_at))}</p>` : ''}
       ${editable ? `<div class="form-actions"><button type="button" data-action="close">${id ? '닫기' : '취소'}</button>${id ? `<button type="button" class="danger" data-action="draft-delete" data-id="${row.id}">삭제</button>` : ''}<button class="primary">저장</button></div>` : ''}</form>
-      ${id ? mailSection(row, data, contacts, editable) : ''}
+      ${id ? mailSection(data, contacts) : ''}
       ${id ? `<section class="subsection draft-export"><h3>문서로 저장</h3>${exportable ? `<div class="draft-export-row"><label>저장 형식<select id="draft-export-format">${formats.map(([key, label]) => `<option value="${key}" ${key === savedFormat() ? 'selected' : ''}>${label}</option>`).join('')}</select></label><button type="button" class="primary" data-action="draft-export" data-id="${row.id}">문서로 저장</button></div><p class="help-line">제목·기안일·기안자·내용과 첨부파일 목록, 참고 링크가 문서에 들어갑니다. 첨부파일 자체는 위 목록에서 따로 내려받으세요.</p>` : `<p class="muted">상태가 '작성 중'이면 문서로 저장할 수 없습니다. 작성을 마치면 상태를 '완료'로 바꿔 저장한 뒤 다시 열어 주세요.</p>`}</section>
       <section class="subsection"><h3>참고 링크 <small>${data.links.length}개</small></h3>${links || '<p class="muted">등록된 링크가 없습니다.</p>'}${editable ? `<form id="draft-link-form" class="draft-link-form">${input('name', '링크 이름', '', 'maxlength="200" placeholder="비우면 주소로 표시"')}${input('url', '주소 (URL) *', '', 'required maxlength="2000" placeholder="https://"')}<button class="primary">추가</button></form>` : ''}</section>
       <section class="subsection draft-files" data-draft-drop="${row.id}"><h3>첨부파일 <small>${data.files.length}개</small></h3>${files || '<p class="muted">첨부파일이 없습니다.</p>'}${editable ? `<form class="upload" id="draft-upload"><input aria-label="첨부할 파일" type="file" name="file" multiple required><button type="submit">파일 첨부</button></form><p class="help-line">파일을 이 영역에 끌어 놓아도 첨부됩니다.</p>` : ''}</section>`
@@ -73,31 +70,14 @@ export function createDrafts({ api, esc, state, canEdit, openDialog, input, toas
     if (scroll) modal.scrollTop = scroll;
   }
 
-  function mailSection(row, data, contacts, editable) {
-    const helper = data.mail_helper ?? {};
-    const helperLine = helper.running ? `<span class="badge mail-helper-on">발송 도우미 실행 중</span> 발송 계정 ${esc(helper.account || '—')}`
-      : `<span class="badge mail-helper-off">발송 도우미 꺼짐</span> ${helper.at ? `마지막 확인 ${esc(fmt(helper.at))} · ` : ''}보낸 요청은 이 PC에 로그인해 Outlook 발송 도우미가 켜지면 발송됩니다.`;
-    const ready = row.approver_email && row.status !== 'writing';
-    const reason = !row.approver_email ? '승인 요청자를 골라 저장하면 보낼 수 있습니다.' : row.status === 'writing' ? "상태가 '작성 중'이면 보낼 수 없습니다. 상태를 바꿔 저장해 주세요." : '';
-    const history = (data.mails ?? []).map(m => `<div class="mail-row"><div class="mail-row-head"><strong>${esc(m.tag)}</strong> ${mailBadge(m.status, m.receipt)}<span class="secondary-line">요청 ${esc(fmt(m.created_at))} · ${esc(m.requested_by_name ?? '')}${m.sent_at ? ` / 발송 ${esc(fmt(m.sent_at))}${m.account ? ' · ' + esc(m.account) : ''}` : ''}${m.read_at && m.receipt === 'read' ? ` / 접수 ${esc(fmt(m.read_at))}` : ''}</span></div>
-      <ul class="mail-recipients">${m.recipients.map(r => `<li><span class="mail-kind">${r.kind === 'to' ? '승인 요청' : 'CC'}</span> ${esc(person(contacts, r.email))} ${m.status === 'sent' ? `<span class="badge mail-receipt mail-receipt-${r.receipt}">${r.receipt === 'read' ? '읽음' : r.receipt === 'not_read' ? '읽지 않고 삭제' : '읽기 전'}</span>${r.receipt_at && r.receipt !== 'pending' ? ` <small>${esc(fmt(r.receipt_at))}</small>` : ''}` : ''}</li>`).join('')}</ul>
-      ${m.error ? `<p class="error-text">${esc(m.error)}</p>` : ''}${m.status === 'queued' && editable ? `<button type="button" class="small" data-action="draft-mail-cancel" data-id="${m.id}">발송 취소</button>` : ''}</div>`).join('');
-    return `<section class="subsection draft-mail"><h3>승인 요청 메일 <small>${(data.mails ?? []).length}건</small></h3>
-      <p class="help-line mail-helper">${helperLine}</p>
-      ${editable ? `<div class="draft-mail-actions"><button type="button" class="primary" data-action="draft-mail-send" data-id="${row.id}" ${ready ? '' : 'disabled'}>승인 요청 메일 보내기</button><button type="button" data-action="draft-mail-refresh" data-id="${row.id}">새로 고침</button>${reason ? `<span class="muted">${reason}</span>` : ''}</div>` : ''}
-      <p class="help-line">이 PC의 Outlook으로 승인 요청자에게(CC 포함) 기안 내용과 기안서 PDF·첨부파일을 보내고 읽음 확인을 요청합니다. 승인 요청자가 읽음 확인을 보내면 '접수완료', 그 전에는 '접수중'으로 표시합니다(수신자가 읽음 확인 보내기를 거절하면 계속 '접수중').</p>
-      ${history || '<p class="muted">보낸 메일이 없습니다.</p>'}</section>`;
-  }
-
-  async function sendMail(id) {
-    const row = draftState.selected;
-    if (changed(unsaved(), row)) throw new Error('저장하지 않은 변경 내용이 있습니다. 먼저 저장한 뒤 보내 주세요.');
-    const contacts = (await api('/draft-contacts')).contacts;
-    const cc = (row.cc_emails ?? []).map(email => person(contacts, email));
-    if (!confirm(`승인 요청 메일을 보낼까요?\n\n받는 사람: ${person(contacts, row.approver_email)}\nCC: ${cc.length ? cc.join(', ') : '없음'}\n\n이 PC의 Outlook(발송 도우미)으로 보냅니다.`)) return;
-    const result = await api(`/drafts/${Number(id)}/mail`, { method: 'POST', body: { version: row.version } });
-    await draftDialog(id); await renderDrafts();
-    toast(result.mail_helper?.running ? '발송 요청을 넣었습니다. 잠시 뒤 Outlook으로 발송됩니다.' : '발송 요청을 넣었습니다. Outlook 발송 도우미가 꺼져 있어 도우미가 켜지면 발송됩니다.');
+  // 메일 발송 기록(간단히): 시각 · 받는 사람 · CC · 결과
+  function mailSection(data, contacts) {
+    const mails = data.mails ?? [];
+    if (!mails.length) return '';
+    const helperOff = !data.mail_helper?.running && mails.some(m => m.status === 'queued');
+    const rows = mails.map(m => { const to = m.recipients.filter(r => r.kind === 'to').map(r => person(contacts, r.email)), cc = m.recipients.filter(r => r.kind === 'cc').map(r => person(contacts, r.email));
+      return `<li><span class="badge mail-state-${m.status}">${mailState[m.status] ?? m.status}</span> ${esc(fmt(m.sent_at ?? m.created_at))} · 받는 사람 ${esc(to.join(', '))}${cc.length ? ` · CC ${esc(cc.join(', '))}` : ''}${m.error ? `<span class="error-text">${esc(m.error)}</span>` : ''}</li>`; }).join('');
+    return `<section class="subsection draft-mail"><h3>메일 발송 기록 <small>${mails.length}건</small></h3>${helperOff ? '<p class="error-text">Outlook 발송 도우미가 꺼져 있어 대기 중인 메일은 이 PC에 로그인하면 발송됩니다.</p>' : ''}<ul class="mail-history">${rows}</ul></section>`;
   }
 
   // 승인 요청자를 고르면 같은 사람은 CC에서 뺀다.
@@ -148,9 +128,6 @@ export function createDrafts({ api, esc, state, canEdit, openDialog, input, toas
       case 'draft-link-delete': if (confirm('이 링크를 삭제할까요?')) { await api('/draft-links/' + id, { method: 'DELETE' }); await draftDialog(draftState.selected.id); await renderDrafts(); } return true;
       case 'draft-file-delete': if (confirm('첨부파일을 삭제할까요?')) { await api('/draft-files/' + id, { method: 'DELETE' }); await draftDialog(draftState.selected.id); await renderDrafts(); toast('첨부파일을 삭제했습니다.'); } return true;
       case 'draft-export': await exportDraft(id, button); return true;
-      case 'draft-mail-send': button.disabled = true; try { await sendMail(id); } finally { if (button.isConnected) button.disabled = false; } return true;
-      case 'draft-mail-refresh': await draftDialog(id); await renderDrafts(); return true;
-      case 'draft-mail-cancel': if (confirm('발송 대기 중인 메일을 취소할까요?')) { await api(`/draft-mails/${Number(id)}/cancel`, { method: 'POST', body: {} }); await draftDialog(draftState.selected.id); await renderDrafts(); toast('메일 발송을 취소했습니다.'); } return true;
       default: return false;
     }
   }
@@ -160,10 +137,15 @@ export function createDrafts({ api, esc, state, canEdit, openDialog, input, toas
       case 'draft-form': {
         const row = draftState.selected;
         const body = { ...values, cc_emails: checkedCc(form), version: row.version }; delete body.cc;
+        // 승인 요청자가 있으면 저장 전에 메일 발송 여부를 묻는다. '확인' → 저장 후 발송(발송되면 상태가 '완료'), '취소' → 저장만.
+        const send = Boolean(body.approver_email) && confirm('해당 내용으로 기안 메일을 발송하시겠습니까?');
         const saved = await api('/drafts' + (row.id ? '/' + row.id : ''), { method: row.id ? 'PUT' : 'POST', body });
+        let mail = null;
+        if (send) mail = await api(`/drafts/${saved.draft.id}/mail`, { method: 'POST', body: { version: saved.draft.version } });
         // 저장하면 창을 닫고 목록을 새로 고친다(회의록과 같은 동작).
         modal.close(); await renderDrafts();
-        toast(row.id ? '기안을 저장했습니다.' : `기안을 저장했습니다. 목록에서 '${saved.draft.title}'을(를) 열면 링크·첨부파일을 추가할 수 있습니다.`); return true;
+        toast(mail ? (mail.mail_helper?.running ? '저장했습니다. Outlook으로 기안 메일을 보내는 중입니다(보내면 상태가 완료로 바뀝니다).' : '저장했습니다. Outlook 발송 도우미가 꺼져 있어 이 PC에 로그인하면 메일이 발송됩니다.')
+          : body.approver_email ? '저장했습니다. 메일은 보내지 않았습니다.' : '저장했습니다. 메일을 보내려면 승인 요청자를 골라 저장하세요.'); return true;
       }
       case 'draft-link-form': await api(`/drafts/${draftState.selected.id}/links`, { method: 'POST', body: values }); await draftDialog(draftState.selected.id); await renderDrafts(); toast('링크를 추가했습니다.'); return true;
       case 'draft-upload': await uploadFiles([...form.elements.file.files]); return true;

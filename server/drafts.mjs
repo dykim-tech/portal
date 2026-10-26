@@ -19,7 +19,8 @@ const date = (value, label) => {
   if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value) || !Number.isFinite(Date.parse(value)) || new Date(value).toISOString().slice(0, 10) !== value) throw fail(400, `${label}을(를) 확인해 주세요.`);
   return value;
 };
-export const draftStatuses = { writing: '작성 중', done: '완료', submitted: '상신', approved: '승인', rejected: '반려' };
+// 상태는 '작성 중'과 '완료' 두 가지(2026-10-26). 기안 메일이 발송되면 '완료'로 바뀐다.
+export const draftStatuses = { writing: '작성 중', done: '완료' };
 const status = value => { if (!Object.hasOwn(draftStatuses, value)) throw fail(400, '진행 상태를 확인해 주세요.'); return value; };
 const linkUrl = value => {
   let url = text(value, '링크 주소', 2000, true);
@@ -57,6 +58,8 @@ export function initializeDrafts(db) {
   const columns = new Set(db.prepare('PRAGMA table_info(drafts)').all().map(c => c.name));
   if (!columns.has('approver_email')) db.exec("ALTER TABLE drafts ADD COLUMN approver_email TEXT NOT NULL DEFAULT ''");
   if (!columns.has('cc_emails')) db.exec("ALTER TABLE drafts ADD COLUMN cc_emails TEXT NOT NULL DEFAULT '[]'");
+  // 예전 상태(상신·승인·반려)는 '완료'로 합친다.
+  db.exec("UPDATE drafts SET status='done' WHERE status IN ('submitted','approved','rejected')");
   initializeDraftMail(db);
 }
 const ccList = value => { try { const list = JSON.parse(value ?? '[]'); return Array.isArray(list) ? list.filter(e => typeof e === 'string') : []; } catch { return []; } };
@@ -102,9 +105,7 @@ export function registerDrafts(app, { db, requireRole, upload, dataDir, mailPoll
     const total = db.prepare(`SELECT COUNT(*) n FROM drafts d ${where}`).get(...params).n;
     const drafts = db.prepare(`SELECT d.id,d.title,d.draft_date,d.drafter,d.status,d.updated_at,uu.name updated_by_name,
       (SELECT COUNT(*) FROM draft_files f WHERE f.draft_id=d.id) file_count,
-      (SELECT COUNT(*) FROM draft_links l WHERE l.draft_id=d.id) link_count,
-      (SELECT m.status FROM draft_mails m WHERE m.draft_id=d.id ORDER BY m.id DESC LIMIT 1) mail_status,
-      (SELECT m.receipt FROM draft_mails m WHERE m.draft_id=d.id ORDER BY m.id DESC LIMIT 1) mail_receipt
+      (SELECT COUNT(*) FROM draft_links l WHERE l.draft_id=d.id) link_count
       FROM drafts d LEFT JOIN users uu ON uu.id=d.updated_by ${where} ORDER BY d.draft_date DESC,d.id DESC LIMIT ? OFFSET ?`).all(...params, pageSize, (page - 1) * pageSize);
     const counts = Object.fromEntries(db.prepare('SELECT status,COUNT(*) n FROM drafts GROUP BY status').all().map(row => [row.status, row.n]));
     res.json({ drafts, total, page, page_size: pageSize, counts });
@@ -182,11 +183,11 @@ export function registerDrafts(app, { db, requireRole, upload, dataDir, mailPoll
     res.json({ contacts });
   });
 
-  // 승인 요청 메일 보내기: 이 PC의 Outlook 발송 도우미가 실제로 보낸다(server/draft-mail.mjs).
+  // 기안 메일 보내기(저장 후 확인 창에서 '확인'): 이 PC의 Outlook 발송 도우미가 실제로 보낸다(server/draft-mail.mjs).
+  // 발송이 끝나면 기안 상태를 '완료'로 바꾼다.
   app.post('/api/drafts/:id/mail', edit, async (req, res) => {
     const row = draft(req.params.id);
     if (row.version !== Number(req.body?.version)) throw Object.assign(fail(409, '기안이 그 사이 수정되었습니다. 창을 다시 연 뒤 보내 주세요.'), { expose: true });
-    if (row.status === 'writing') throw Object.assign(fail(409, "작성 중인 기안은 보낼 수 없습니다. 상태를 바꿔 저장한 뒤 보내 주세요."), { expose: true });
     if (!row.approver_email) throw Object.assign(fail(400, '승인 요청자를 골라 저장한 뒤 보내 주세요.'), { expose: true });
     const names = new Map(readContacts(db).map(c => [c.email, c.name]));
     const person = email => ({ email, name: names.get(email) ?? email.split('@')[0] });

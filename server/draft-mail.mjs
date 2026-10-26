@@ -1,11 +1,11 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-// 업무기안 승인 요청 메일: 포털은 메일 서버에 직접 접속하지 않는다.
+// 업무기안 메일: 포털은 메일 서버에 직접 접속하지 않는다.
 // 포털이 데이터 폴더의 mailer/outbox에 발송 요청(job.json + 첨부)을 남기면, 사용자가 로그인한 화면에서 실행되는
-// Outlook 발송 도우미(scripts/windows-outlook-mailer.ps1)가 이 PC의 Outlook으로 읽음 확인을 요청해 보내고
-// 결과(result.json)를 남긴다. 도우미는 보낸 메일의 수신자별 추적 정보(읽음)와 받은편지함의 읽음 확인 메일을 살펴
-// mailer/status에 기록하고, 포털은 이를 읽어 승인 요청자가 읽었으면 '접수완료', 아니면 '접수중'으로 표시한다.
+// Outlook 발송 도우미(scripts/windows-outlook-mailer.ps1)가 이 PC의 Outlook으로 보내고 결과(result.json)를 남긴다.
+// 포털은 결과를 읽어 발송 기록을 바꾸고, 발송되면 기안 상태를 '완료'로 바꾼다. 읽음·접수 여부는 확인하지 않는다(2026-10-26).
+// (draft_mails.receipt, draft_mail_recipients.receipt 열은 이전 버전에서 쓰던 것으로 지금은 쓰지 않는다.)
 
 const fail = (status, message) => Object.assign(new Error(message), { status, expose: true });
 const now = () => new Date().toISOString();
@@ -17,7 +17,6 @@ export const DEFAULT_CONTACTS = [
 const EMAIL = /^[A-Za-z0-9._%+'-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/;
 export const MAX_ATTACH_BYTES = 20 * 1024 * 1024;
 const HELPER_STALE_MS = 120_000;
-const TRACK_DAYS = 60;
 
 export function validateContacts(value) {
   if (!Array.isArray(value) || value.length > 30) throw fail(400, '계정 목록을 확인해 주세요(최대 30개).');
@@ -61,12 +60,11 @@ export function readContacts(db) {
 }
 
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
-const statusLabel = { writing: '작성 중', done: '완료', submitted: '상신', approved: '승인', rejected: '반려' };
 
 export function mailHtml({ draft, links, files, approver, cc, attachedFiles, skippedFiles }) {
   const cell = 'border:1px solid #d0d7d4;padding:8px 12px;vertical-align:top;';
   const head = cell + 'background:#eef4f1;width:110px;font-weight:bold;white-space:nowrap;';
-  const rows = [['제목', esc(draft.title)], ['기안일', esc(draft.draft_date)], ['기안자', esc(draft.drafter || '—')], ['진행 상태', esc(statusLabel[draft.status] ?? draft.status)],
+  const rows = [['제목', esc(draft.title)], ['기안일', esc(draft.draft_date)], ['기안자', esc(draft.drafter || '—')],
     ['승인 요청자', esc(`${approver.name} <${approver.email}>`)], ['참조(CC)', cc.length ? cc.map(c => esc(`${c.name} <${c.email}>`)).join('<br>') : '—']];
   const content = esc(draft.content || '(내용 없음)').replace(/\r?\n/g, '<br>');
   const linkList = links.length ? `<ul style="margin:4px 0;padding-left:20px;">${links.map(l => `<li><a href="${esc(l.url)}">${esc(l.name)}</a> <span style="color:#667;">${esc(l.url)}</span></li>`).join('')}</ul>` : '<p style="margin:4px 0;color:#667;">없음</p>';
@@ -77,7 +75,7 @@ export function mailHtml({ draft, links, files, approver, cc, attachedFiles, ski
 <h3 style="font-size:15px;margin:16px 0 6px;">내용</h3><div style="border:1px solid #d0d7d4;padding:10px 12px;">${content}</div>
 <h3 style="font-size:15px;margin:16px 0 6px;">참고 링크</h3>${linkList}
 <h3 style="font-size:15px;margin:16px 0 6px;">첨부파일</h3>${fileList}
-<p style="margin-top:20px;color:#667;font-size:12px;">이 메일은 DYKIM PORTAL 업무기안에서 보냈습니다. 메일을 열 때 읽음 확인을 묻는 창이 나오면 '예'를 눌러 주세요. 접수 확인에 사용됩니다.</p></div>`;
+<p style="margin-top:20px;color:#667;font-size:12px;">이 메일은 DYKIM PORTAL 업무기안에서 보냈습니다.</p></div>`;
 }
 
 // 첨부 파일 이름: Windows에서 쓸 수 없는 문자를 바꾸고 같은 이름은 번호를 붙인다.
@@ -125,7 +123,7 @@ export function createDraftMailer({ db, dataDir }) {
       const pdfFile = attachmentName(pdfName, used); writeFileSync(join(temp, 'files', pdfFile), pdf); attachments.push(pdfFile);
       if (!skippedFiles) for (const file of files) { const name = attachmentName(file.name, used); writeFileSync(join(temp, 'files', name), readFile(file)); attachments.push(name); }
       const html = mailHtml({ draft, links, files, approver, cc, attachedFiles: true, skippedFiles });
-      writeJson(join(temp, 'job.json'), { id: mailId, tag, subject, to: [approver], cc, html, attachments: attachments.map(name => 'files/' + name), read_receipt: true, created_at: now() });
+      writeJson(join(temp, 'job.json'), { id: mailId, tag, subject, to: [approver], cc, html, attachments: attachments.map(name => 'files/' + name), read_receipt: false, created_at: now() });
       renameSync(temp, jobDir(mailId));
       db.prepare('UPDATE draft_mails SET attachments=? WHERE id=?').run(JSON.stringify(attachments), mailId);
     } catch (error) {
@@ -148,24 +146,6 @@ export function createDraftMailer({ db, dataDir }) {
     return row;
   }
 
-  const rank = { pending: 0, not_read: 1, read: 2 };
-  function applyStatus(mailId, recipients) {
-    const mail = db.prepare('SELECT * FROM draft_mails WHERE id=?').get(mailId);
-    if (!mail) return;
-    const current = db.prepare('SELECT * FROM draft_mail_recipients WHERE mail_id=?').all(mailId);
-    const update = db.prepare('UPDATE draft_mail_recipients SET receipt=?,receipt_at=? WHERE mail_id=? AND email=?');
-    for (const item of Array.isArray(recipients) ? recipients : []) {
-      const email = String(item?.email ?? '').trim().toLowerCase(), status = item?.status;
-      if (!['read', 'not_read'].includes(status)) continue;
-      const row = current.find(r => r.email === email);
-      if (!row || rank[status] <= rank[row.receipt]) continue;
-      const at = Number.isFinite(Date.parse(item.at)) ? new Date(item.at).toISOString() : now();
-      update.run(status, at, mailId, email);
-      if (email === mail.approver_email) db.prepare('UPDATE draft_mails SET receipt=?,read_at=? WHERE id=?').run(status, at, mailId);
-    }
-  }
-
-  let lastTracking = '';
   function poll() {
     if (!db.isOpen) return;
     ensure();
@@ -179,27 +159,22 @@ export function createDraftMailer({ db, dataDir }) {
       if (!existsSync(join(dir, 'result.json'))) continue;
       let result; try { result = readJson(join(dir, 'result.json')); } catch { continue; }
       if (mail.status === 'queued') {
-        if (result.ok) db.prepare("UPDATE draft_mails SET status='sent',sent_at=?,account=?,error='' WHERE id=?").run(Number.isFinite(Date.parse(result.sent_at)) ? new Date(result.sent_at).toISOString() : now(), String(result.account ?? '').slice(0, 200), mailId);
+        if (result.ok) {
+          db.prepare("UPDATE draft_mails SET status='sent',sent_at=?,account=?,error='' WHERE id=?").run(Number.isFinite(Date.parse(result.sent_at)) ? new Date(result.sent_at).toISOString() : now(), String(result.account ?? '').slice(0, 200), mailId);
+          // 메일이 발송되면 기안 상태를 '완료'로 바꾼다.
+          db.prepare("UPDATE drafts SET status='done',version=version+1,updated_at=? WHERE id=(SELECT draft_id FROM draft_mails WHERE id=?) AND status!='done'").run(now(), mailId);
+        }
         else db.prepare("UPDATE draft_mails SET status='failed',error=? WHERE id=?").run(String(result.error ?? '알 수 없는 오류').slice(0, 1000), mailId);
       }
       rmSync(dir, { recursive: true, force: true });
     }
-    // 2) 읽음 정보
-    for (const name of readdirSync(statusDir)) {
-      const match = /^mail-(\d+)\.json$/.exec(name); if (!match) continue;
-      try { applyStatus(Number(match[1]), readJson(join(statusDir, name)).recipients); } catch {}
-      rmSync(join(statusDir, name), { force: true });
-    }
-    // 3) 도우미가 살펴볼 메일 목록(보낸 지 60일 이내, 아직 읽음 확인이 끝나지 않은 메일)
-    const since = new Date(Date.now() - TRACK_DAYS * 86400000).toISOString();
-    const mails = db.prepare(`SELECT id,tag,subject,sent_at FROM draft_mails m WHERE status='sent' AND sent_at>=? AND EXISTS(SELECT 1 FROM draft_mail_recipients r WHERE r.mail_id=m.id AND r.receipt!='read') ORDER BY id`).all(since);
-    const recipients = db.prepare('SELECT email,kind FROM draft_mail_recipients WHERE mail_id=? ORDER BY kind DESC,email');
-    const tracking = JSON.stringify({ mails: mails.map(m => ({ ...m, recipients: recipients.all(m.id).map(r => r.email) })) });
-    if (tracking !== lastTracking || !existsSync(join(root, 'tracking.json'))) { writeJson(join(root, 'tracking.json'), JSON.parse(tracking)); lastTracking = tracking; }
+    // 예전 버전의 읽음 확인용 파일은 지운다.
+    rmSync(join(root, 'tracking.json'), { force: true });
+    for (const name of readdirSync(statusDir)) rmSync(join(statusDir, name), { force: true });
   }
 
   function mailsFor(draftId) {
-    const recipients = db.prepare('SELECT email,name,kind,receipt,receipt_at FROM draft_mail_recipients WHERE mail_id=? ORDER BY kind DESC,rowid');
+    const recipients = db.prepare('SELECT email,name,kind FROM draft_mail_recipients WHERE mail_id=? ORDER BY kind DESC,rowid');
     return db.prepare('SELECT m.*,u.name requested_by_name FROM draft_mails m LEFT JOIN users u ON u.id=m.requested_by WHERE m.draft_id=? ORDER BY m.id DESC').all(draftId)
       .map(m => ({ ...m, attachments: (() => { try { return JSON.parse(m.attachments); } catch { return []; } })(), recipients: recipients.all(m.id) }));
   }
