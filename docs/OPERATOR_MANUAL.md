@@ -129,10 +129,11 @@ powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File '.\scripts\windows
 
 - 왼쪽·상단 메뉴의 **NAS**를 누르면 NAS 웹 화면 https://dykim-nas.duckdns.org/ 이 새 탭에서 열립니다. 포털 화면은 그대로 유지됩니다. NAS 로그인은 NAS 계정으로 합니다(포털은 NAS 계정 정보를 저장하지 않음).
 
-### 4-1-4. OMV NAS 관리자 설정 / LOGIN NAS 관리자 설정
+### 4-1-4. NAS 메뉴(묶음)
 
-- **OMV NAS 관리자 설정**(2026-10-26 이름·주소 변경): NAS 관리 화면(openmediavault Workbench) https://omv.dykim-nas.duckdns.org/ 을 새 탭에서 엽니다.
-- **LOGIN NAS 관리자 설정**(2026-10-26 신설): https://login.dykim-nas.duckdns.org/ 을 새 탭에서 엽니다.
+- 왼쪽 메뉴의 **NAS**를 누르면 펼쳐지고 다시 누르면 접힙니다(펼침 상태는 이 브라우저에 기억). 상단 가로 메뉴에서는 **NAS ▾** 오른쪽에 하위 메뉴가 이어서 나타납니다.
+- 하위 메뉴는 모두 새 탭에서 엽니다: **NAS** https://dykim-nas.duckdns.org/ , **OMV NAS 관리자**(openmediavault Workbench) https://omv.dykim-nas.duckdns.org/ , **LOGIN NAS 관리자** https://login.dykim-nas.duckdns.org/ .
+- 메뉴 표시·순서 편집에서는 NAS 묶음이 메뉴 하나로 표시됩니다(2026-10-26).
 - 포털 화면은 그대로 유지되며, 로그인은 각 NAS 화면에서 합니다(포털은 계정 정보를 저장하지 않음).
 - 대시보드 **NAS 현황**은 이 메뉴와 별개로 **설정 → NAS 연동**에 저장한 주소(기본 http://100.116.94.33:8088)를 씁니다.
 

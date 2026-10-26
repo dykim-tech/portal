@@ -47,13 +47,29 @@ async function saveHiddenMenus(next){
   renderSidebarMenu();renderSettingsMenu();
   toast(saved.hidden.length?`메뉴 ${saved.hidden.length}개를 숨겼습니다. 모든 사용자에게 적용됩니다.`:'모든 메뉴를 표시합니다.');
 }
+// 묶음 메뉴(2026-10-26): NAS 하나를 누르면 펼쳐져 하위 메뉴(모두 새 탭에서 여는 외부 주소)가 보인다.
+// 메뉴 순서·표시 설정에서는 묶음 전체가 메뉴 하나(NAS)로 다뤄진다. 펼침 상태는 이 브라우저에 기억한다.
+const menuGroups={nas:[['nas-site','NAS','https://dykim-nas.duckdns.org/'],['nasadmin','OMV NAS 관리자','https://omv.dykim-nas.duckdns.org/'],['naslogin','LOGIN NAS 관리자','https://login.dykim-nas.duckdns.org/']]};
+const menuLinks=new Map(Object.values(menuGroups).flat().map(([id,,url])=>[id,url]));
+const menuGroupKey=group=>`portal-menu-group-${group}`;
+function menuGroupOpen(group){try{return localStorage.getItem(menuGroupKey(group))==='1';}catch{return false;}}
+function toggleMenuGroup(group){const open=!menuGroupOpen(group);try{localStorage.setItem(menuGroupKey(group),open?'1':'0');}catch{}renderSidebarMenu();document.querySelector(`#sidebar-nav [data-group="${group}"]`)?.focus();}
+const groupChevron=open=>`<svg class="nav-group-chevron" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><path d="${open?'M5 12.5 10 7.5l5 5':'M5 7.5l5 5 5-5'}" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 function renderSidebarMenu(){
   const nav=document.querySelector('#sidebar-nav');if(!nav)return;
   const names=new Map(sidebarMenus);
-  nav.innerHTML=shownMenuOrder().map(id=>`<button type="button" data-view="${id}">${esc(names.get(id))}</button>`).join('');
+  const item=(id,top)=>{
+    const group=menuGroups[id];
+    if(!group)return `<button type="button" data-view="${id}">${esc(names.get(id))}</button>`;
+    const open=menuGroupOpen(id),children=group.map(([child,label])=>`<button type="button" class="nav-group-item" data-view="${child}" title="${esc(label)} (새 탭)">${esc(label)}</button>`).join('');
+    const toggle=`<button type="button" class="nav-group-toggle" data-action="menu-group-toggle" data-group="${id}" aria-expanded="${open}"><span>${esc(names.get(id))}</span>${groupChevron(open)}</button>`;
+    // 왼쪽 메뉴는 아래로 펼치고, 상단 가로 메뉴는 오른쪽으로 이어서 보여 준다(가로 메뉴는 스크롤 영역이라 겹쳐 뜨는 목록은 잘림).
+    return top?toggle+(open?children:''):`<div class="nav-group ${open?'open':''}">${toggle}${open?`<div class="nav-group-items">${children}</div>`:''}</div>`;
+  };
+  nav.innerHTML=shownMenuOrder().map(id=>item(id,false)).join('');
   // 상단 가로 메뉴도 설정에서 정한 순서를 똑같이 따른다.
   const top=document.querySelector('.horizontal-nav');
-  if(top)top.innerHTML=shownMenuOrder().map(id=>`<button data-view="${id}">${esc(names.get(id))}</button>`).join('');
+  if(top)top.innerHTML=shownMenuOrder().map(id=>item(id,true)).join('');
   updateNav();
 }
 function renderSettingsMenu(){
@@ -113,7 +129,7 @@ function authPage(setup){
   else {emailField.closest('label').outerHTML=loginField;root.querySelector('.auth-note').textContent='기존 계정은 이전 이메일의 @ 앞부분을 아이디로 입력하세요. 아이디가 겹치면 관리자에게 확인해 주세요.';}
 }
 function shell(){
-  const menus=[['dashboard','대시보드'],['meetings','회의록'],['drafts','업무기안'],['installations','설치관리'],['projects','프로젝트 관리'],['library','자료 관리'],['items','자산 관리'],['todos','TO-DO List'],['work','업무관리'],['reports','리포트'],['tools','도구'],['outlook','Mail'],['gracecns','GRACECNS'],['nas','NAS'],['nasadmin','OMV NAS 관리자 설정'],['naslogin','LOGIN NAS 관리자 설정'],['settings','설정']];
+  const menus=[['dashboard','대시보드'],['meetings','회의록'],['drafts','업무기안'],['installations','설치관리'],['projects','프로젝트 관리'],['library','자료 관리'],['items','자산 관리'],['todos','TO-DO List'],['work','업무관리'],['reports','리포트'],['tools','도구'],['outlook','Mail'],['gracecns','GRACECNS'],['nas','NAS'],['settings','설정']];
   sidebarMenus=menus;
   hiddenMenus=Array.isArray(state.user.hidden_menus)?state.user.hidden_menus.filter(id=>id!=='settings'):[];
   const defaults=sidebarMenus.map(([view])=>view);
@@ -729,11 +745,9 @@ document.addEventListener('click',async event=>{
     if(button.dataset.view==='outlook'){launchOutlook();return;}
     // GRACECNS 메뉴: 회사 홈페이지를 새 탭에서 바로 연다(포털 화면은 그대로).
     if(button.dataset.view==='gracecns'){window.open('http://gracecns.com/','_blank','noopener,noreferrer');return;}
-    // NAS 메뉴: 개인 NAS 웹 화면을 새 탭에서 연다(https, 접속 확인: /web/client 로 이동).
-    if(button.dataset.view==='nas'){window.open('https://dykim-nas.duckdns.org/','_blank','noopener,noreferrer');return;}
-    // OMV NAS 관리자 설정: openmediavault 관리 화면, LOGIN NAS 관리자 설정: NAS 로그인 관리 화면(2026-10-26 주소 변경·추가)
-    if(button.dataset.view==='nasadmin'){window.open('https://omv.dykim-nas.duckdns.org/','_blank','noopener,noreferrer');return;}
-    if(button.dataset.view==='naslogin'){window.open('https://login.dykim-nas.duckdns.org/','_blank','noopener,noreferrer');return;}
+    // NAS 묶음의 하위 메뉴(NAS·OMV NAS 관리자·LOGIN NAS 관리자): 각 주소를 새 탭에서 연다(포털 화면은 그대로).
+    if(menuLinks.has(button.dataset.view)){window.open(menuLinks.get(button.dataset.view),'_blank','noopener,noreferrer');return;}
+    if(button.dataset.action==='menu-group-toggle'){toggleMenuGroup(button.dataset.group);return;}
     if(button.dataset.view){await navigateTo(button.dataset.view);return;}
     if(button.dataset.tableSort){const kind=button.dataset.tableSort,key=button.dataset.sort,config=tableState[kind];if(!tableColumns[kind]?.includes(key))return;config.direction=config.sort===key?(config.direction==='asc'?'desc':'asc'):['updated_at','created_at','work_date','installed_on','completed_on','due_date'].includes(key)?'desc':'asc';config.sort=key;resetListingPage(kind);await renderView();return;}
     const action=button.dataset.action,id=button.dataset.id;if(!action)return;
