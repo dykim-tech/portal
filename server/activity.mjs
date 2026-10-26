@@ -41,6 +41,9 @@ function changedResource(req) {
   if (req.method === 'POST' && resource === 'auth' && second === 'password') return { scope: 'users', resource: 'password' };
   if (!['POST', 'PUT', 'DELETE'].includes(req.method)) return null;
   if (resource === 'backups') return req.method === 'POST' && !third ? { scope: 'backups', resource } : null;
+  // 업무기안 승인 요청 메일 발송·취소
+  if (resource === 'drafts' && third === 'mail' && req.method === 'POST') return { scope: 'drafts', resource: 'draft-mail' };
+  if (resource === 'draft-mails' && third === 'cancel') return { scope: 'drafts', resource: 'draft-mail-cancel' };
   if (resource === 'categories') return { scope: req.body?.scope === 'installations' || req.query.scope === 'installations' ? 'installations' : 'items', resource };
   if (!resourceViews[resource]) return null;
   return { scope: resourceViews[resource], resource };
@@ -53,9 +56,9 @@ export function recordMutation(db, req, body) {
   const row = body?.installation ?? body?.item ?? body?.log ?? body?.meeting ?? body?.draft ?? body?.customer ?? body?.user ?? body?.folder ?? body?.file ?? body?.link ?? body?.backup;
   const entityId = Number(row?.id ?? body?.id ?? req.params?.id) || null;
   const subject = row?.name ?? row?.title ?? row?.customer ?? body?.title ?? req.body?.name ?? req.body?.title ?? req.file?.originalname ?? (entityId ? `#${entityId}` : views[scope]);
-  const action = resource === 'password' ? '비밀번호 변경' : req.method === 'POST' ? '등록' : req.method === 'PUT' ? '수정' : '삭제';
+  const action = resource === 'password' ? '비밀번호 변경' : resource === 'draft-mail' ? '발송 요청' : resource === 'draft-mail-cancel' ? '발송 취소' : req.method === 'POST' ? '등록' : req.method === 'PUT' ? '수정' : '삭제';
   const noun = resource === 'password' ? '사용자' : resource === 'categories' ? '분류' :
-    ['installation-files', 'files', 'meeting-files', 'draft-files'].includes(resource) ? '첨부자료' : resource === 'meetings' ? '회의록' : resource === 'drafts' ? '업무기안' : resource === 'draft-links' ? '링크' : resource === 'meeting-actions' ? '후속 조치' : resource === 'folders' ? '폴더' :
+    ['installation-files', 'files', 'meeting-files', 'draft-files'].includes(resource) ? '첨부자료' : resource === 'meetings' ? '회의록' : resource === 'drafts' ? '업무기안' : resource.startsWith('draft-mail') ? '승인 요청 메일' : resource === 'draft-links' ? '링크' : resource === 'meeting-actions' ? '후속 조치' : resource === 'folders' ? '폴더' :
     resource === 'manuals' ? '자료' : resource === 'library-links' ? '링크' : resource === 'work-logs' ? '업무일지' : resource === 'customers' ? '고객' :
     resource === 'users' ? '사용자' : resource === 'backups' ? '백업' : scope === 'items' ? '자산' : '설치 정보';
   recordActivity(db, { scope, action: req.method === 'POST' ? 'create' : req.method === 'PUT' ? 'update' : 'delete',

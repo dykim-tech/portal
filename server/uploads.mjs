@@ -198,6 +198,17 @@ export function getStoredFile(db, scope, fileId) {
   return db.prepare(`SELECT id,name,size,created_at,${preview},${parent} AS parent_id,length(bytes) AS inline_size FROM ${scope} WHERE id=?`).get(fileId);
 }
 
+// 저장된 파일 전체를 메모리로 읽는다(메일 첨부처럼 크기를 미리 제한한 경우에만 쓴다).
+export function readStoredFile(db, scope, file) {
+  table(scope);
+  if (file.size === 0) return Buffer.alloc(0);
+  if (file.inline_size > 0) return Buffer.from(db.prepare(`SELECT bytes FROM ${scope} WHERE id=?`).get(file.id).bytes);
+  const rows = db.prepare('SELECT bytes FROM file_chunks WHERE scope=? AND file_id=? ORDER BY seq').all(scope, file.id);
+  const buffer = Buffer.concat(rows.map(row => row.bytes));
+  if (buffer.length !== file.size) throw new Error(`Stored file is incomplete (${buffer.length}/${file.size} bytes).`);
+  return buffer;
+}
+
 export function sendStoredFile(db, scope, file, res) {
   table(scope);
   res.set('Content-Length', String(file.size));

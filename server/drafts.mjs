@@ -1,5 +1,6 @@
 import { koreaDate, transaction } from './db.mjs';
-import { storeUpload, discardUpload, deleteUploadChunks, getStoredFile, sendStoredFile } from './uploads.mjs';
+import { storeUpload, discardUpload, deleteUploadChunks, getStoredFile, sendStoredFile, readStoredFile } from './uploads.mjs';
+import { createDraftMailer, initializeDraftMail, readContacts, validateContacts } from './draft-mail.mjs';
 import { draftPdf, draftDocx, draftHwpx, exportFormats } from './draft-export.mjs';
 
 // 업무기안: 간단 양식(제목·기안일·기안자·내용) + 첨부파일 + 참고 링크 + 진행 상태.
@@ -52,23 +53,43 @@ export function initializeDrafts(db) {
     uploaded_by INTEGER NOT NULL REFERENCES users(id), created_at TEXT NOT NULL
   );
   CREATE INDEX IF NOT EXISTS draft_files_draft ON draft_files(draft_id);`);
+  // 승인 요청자(메일 받는 사람 1명)와 참조(CC) 목록. 설정의 '업무기안 메일 계정' 목록에서 고른다.
+  const columns = new Set(db.prepare('PRAGMA table_info(drafts)').all().map(c => c.name));
+  if (!columns.has('approver_email')) db.exec("ALTER TABLE drafts ADD COLUMN approver_email TEXT NOT NULL DEFAULT ''");
+  if (!columns.has('cc_emails')) db.exec("ALTER TABLE drafts ADD COLUMN cc_emails TEXT NOT NULL DEFAULT '[]'");
+  initializeDraftMail(db);
 }
+const ccList = value => { try { const list = JSON.parse(value ?? '[]'); return Array.isArray(list) ? list.filter(e => typeof e === 'string') : []; } catch { return []; } };
 
-export function registerDrafts(app, { db, requireRole, upload }) {
-  const edit = requireRole(['admin', 'editor']);
+export function registerDrafts(app, { db, requireRole, upload, dataDir, mailPollMs }) {
+  const edit = requireRole(['admin', 'editor']), admin = requireRole(['admin']);
+  const mailer = createDraftMailer({ db, dataDir });
+  if (mailPollMs !== 0) mailer.start(mailPollMs);
+  app.locals.draftMailer = mailer;
   const draft = value => {
     const row = db.prepare('SELECT d.*,cu.name created_by_name,uu.name updated_by_name FROM drafts d LEFT JOIN users cu ON cu.id=d.created_by LEFT JOIN users uu ON uu.id=d.updated_by WHERE d.id=?').get(id(value));
     if (!row) throw fail(404, '업무기안을 찾을 수 없습니다.');
-    return row;
+    return { ...row, cc_emails: ccList(row.cc_emails) };
   };
   const link = value => { const row = db.prepare('SELECT * FROM draft_links WHERE id=?').get(id(value)); if (!row) throw fail(404, '링크를 찾을 수 없습니다.'); return row; };
   const draftFile = value => { const file = getStoredFile(db, 'draft_files', id(value)); if (!file) throw fail(404, '첨부파일을 찾을 수 없습니다.'); return file; };
   const touch = (draftId, userId) => db.prepare('UPDATE drafts SET version=version+1,updated_by=?,updated_at=? WHERE id=?').run(userId, now(), draftId);
   const links = draftId => db.prepare('SELECT id,name,url,created_at FROM draft_links WHERE draft_id=? ORDER BY id').all(draftId);
   const files = draftId => db.prepare('SELECT id,name,size,created_at FROM draft_files WHERE draft_id=? ORDER BY id').all(draftId);
-  const input = body => ({
+  // 승인 요청자·CC는 설정의 계정 목록에서만 고른다(목록에서 빠진 계정도 이미 저장된 기안에서는 그대로 둘 수 있다).
+  const recipientsInput = (body, original) => {
+    const allowed = new Set([...readContacts(db).map(c => c.email), ...(original ? [original.approver_email, ...original.cc_emails] : [])].filter(Boolean));
+    const approver = String(body.approver_email ?? '').trim().toLowerCase();
+    if (approver && !allowed.has(approver)) throw fail(400, '승인 요청자는 등록된 계정 중에서 골라 주세요.');
+    const raw = body.cc_emails == null ? [] : body.cc_emails;
+    if (!Array.isArray(raw) || raw.length > 20) throw fail(400, 'CC를 확인해 주세요.');
+    const cc = [...new Set(raw.map(e => String(e).trim().toLowerCase()).filter(e => e && e !== approver))];
+    if (cc.some(e => !allowed.has(e))) throw fail(400, 'CC는 등록된 계정 중에서 골라 주세요.');
+    return { approver_email: approver, cc_emails: JSON.stringify(cc) };
+  };
+  const input = (body, original) => ({
     title: text(body.title, '제목', 200, true), draft_date: date(body.draft_date, '기안일'), drafter: text(body.drafter, '기안자', 100),
-    content: text(body.content, '내용', 50000), status: status(body.status ?? 'writing'),
+    content: text(body.content, '내용', 50000), status: status(body.status ?? 'writing'), ...recipientsInput(body, original),
   });
 
   app.get('/api/drafts', (req, res) => {
@@ -81,19 +102,21 @@ export function registerDrafts(app, { db, requireRole, upload }) {
     const total = db.prepare(`SELECT COUNT(*) n FROM drafts d ${where}`).get(...params).n;
     const drafts = db.prepare(`SELECT d.id,d.title,d.draft_date,d.drafter,d.status,d.updated_at,uu.name updated_by_name,
       (SELECT COUNT(*) FROM draft_files f WHERE f.draft_id=d.id) file_count,
-      (SELECT COUNT(*) FROM draft_links l WHERE l.draft_id=d.id) link_count
+      (SELECT COUNT(*) FROM draft_links l WHERE l.draft_id=d.id) link_count,
+      (SELECT m.status FROM draft_mails m WHERE m.draft_id=d.id ORDER BY m.id DESC LIMIT 1) mail_status,
+      (SELECT m.receipt FROM draft_mails m WHERE m.draft_id=d.id ORDER BY m.id DESC LIMIT 1) mail_receipt
       FROM drafts d LEFT JOIN users uu ON uu.id=d.updated_by ${where} ORDER BY d.draft_date DESC,d.id DESC LIMIT ? OFFSET ?`).all(...params, pageSize, (page - 1) * pageSize);
     const counts = Object.fromEntries(db.prepare('SELECT status,COUNT(*) n FROM drafts GROUP BY status').all().map(row => [row.status, row.n]));
     res.json({ drafts, total, page, page_size: pageSize, counts });
   });
-  app.get('/api/drafts/:id', (req, res) => { const row = draft(req.params.id); res.json({ draft: row, links: links(row.id), files: files(row.id) }); });
+  app.get('/api/drafts/:id', (req, res) => { const row = draft(req.params.id); res.json({ draft: row, links: links(row.id), files: files(row.id), mails: mailer.mailsFor(row.id), mail_helper: mailer.helper() }); });
   app.post('/api/drafts', edit, (req, res) => {
     const data = input(req.body), stamp = now();
     const result = db.prepare(`INSERT INTO drafts(${Object.keys(data).join(',')},created_by,updated_by,created_at,updated_at) VALUES(${Array(Object.keys(data).length + 4).fill('?').join(',')})`).run(...Object.values(data), req.user.id, req.user.id, stamp, stamp);
     res.status(201).json({ draft: draft(result.lastInsertRowid) });
   });
   app.put('/api/drafts/:id', edit, (req, res) => {
-    const data = input(req.body);
+    const data = input(req.body, draft(req.params.id));
     transaction(db, () => {
       const original = draft(req.params.id);
       if (original.version !== Number(req.body.version)) throw fail(409, '다른 사용자가 먼저 수정했습니다. 업무기안을 다시 열어 주세요.');
@@ -148,6 +171,35 @@ export function registerDrafts(app, { db, requireRole, upload }) {
     const file = draftFile(req.params.id);
     transaction(db, () => { deleteUploadChunks(db, 'draft_files', file.id); db.prepare('DELETE FROM draft_files WHERE id=?').run(file.id); touch(file.parent_id, req.user.id); });
     res.json({ ok: true, file: { id: file.id, name: file.name } });
+  });
+
+  // 업무기안 메일 계정 목록(승인 요청자·CC 후보): 모두 조회, 관리자만 수정
+  app.get('/api/draft-contacts', (_req, res) => res.json({ contacts: readContacts(db) }));
+  app.put('/api/draft-contacts', admin, (req, res) => {
+    const contacts = validateContacts(req.body?.contacts);
+    if (!contacts.length) throw fail(400, '계정을 하나 이상 등록해 주세요.');
+    db.prepare("INSERT INTO app_settings(key,value) VALUES('draft_contacts',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(JSON.stringify(contacts));
+    res.json({ contacts });
+  });
+
+  // 승인 요청 메일 보내기: 이 PC의 Outlook 발송 도우미가 실제로 보낸다(server/draft-mail.mjs).
+  app.post('/api/drafts/:id/mail', edit, async (req, res) => {
+    const row = draft(req.params.id);
+    if (row.version !== Number(req.body?.version)) throw Object.assign(fail(409, '기안이 그 사이 수정되었습니다. 창을 다시 연 뒤 보내 주세요.'), { expose: true });
+    if (row.status === 'writing') throw Object.assign(fail(409, "작성 중인 기안은 보낼 수 없습니다. 상태를 바꿔 저장한 뒤 보내 주세요."), { expose: true });
+    if (!row.approver_email) throw Object.assign(fail(400, '승인 요청자를 골라 저장한 뒤 보내 주세요.'), { expose: true });
+    const names = new Map(readContacts(db).map(c => [c.email, c.name]));
+    const person = email => ({ email, name: names.get(email) ?? email.split('@')[0] });
+    const data = { ...row, links: links(row.id), files: files(row.id), printed_on: koreaDate() };
+    const pdf = await draftPdf(data);
+    const mailId = mailer.queue({ draft: row, links: data.links, files: data.files, approver: person(row.approver_email), cc: row.cc_emails.map(person), pdf,
+      pdfName: `${safeName(row.title)}_${row.draft_date}.pdf`, readFile: file => readStoredFile(db, 'draft_files', getStoredFile(db, 'draft_files', file.id)), userId: req.user.id });
+    try { mailer.poll(); } catch {}
+    res.status(201).json({ id: mailId, draft: { id: row.id, title: row.title }, mails: mailer.mailsFor(row.id), mail_helper: mailer.helper() });
+  });
+  app.post('/api/draft-mails/:id/cancel', edit, (req, res) => {
+    const mail = mailer.cancel(id(req.params.id));
+    res.json({ ok: true, draft: { id: mail.draft_id, title: mail.subject } });
   });
 
   // 문서로 저장: ?format=pdf|docx|hwpx

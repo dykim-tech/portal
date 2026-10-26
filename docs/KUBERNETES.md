@@ -144,6 +144,7 @@ sudo bash ./04-import-data.sh /var/tmp/portal-<날짜>.sqlite --check
 |---|---|
 | 휴가 현황(엑셀 연동) | 서버는 PC의 OneDrive 경로(`C:\Users\...`)를 읽을 수 없습니다. 엑셀 파일을 서버 `/srv/dykim-portal/shared/`에 복사하고, 설정 → 휴가 현황 연동의 경로를 `/app/shared/<파일 이름>.xlsm`으로 바꾸세요. **자동 동기화되지 않으므로** 엑셀을 고칠 때마다 다시 복사해야 합니다. |
 | Mail(Outlook) 메뉴 | 각 사용자 PC에 설치된 Outlook을 여는 기능이라 그대로 쓸 수 있습니다(각 PC에서 `scripts/windows-outlook-protocol.ps1` 등록 필요). |
+| 업무기안 승인 요청 메일 | Outlook 발송 도우미는 Windows PC에서만 동작합니다. 서버에서는 메일이 '발송 대기'로 남으므로 이 기능을 쓰려면 PC의 포털을 계속 쓰거나 별도 발송 방식이 필요합니다. |
 | 운영관리 → 점검 로그 | 컨테이너에는 테스트·git이 없어 자동 점검을 끕니다(`PORTAL_SELF_CHECK=off`). |
 | Windows 예약 작업 | 이전 후에는 PC의 `DYKIM Personal Portal` 작업을 **사용 안 함**으로 둡니다(5절 ①). |
 | 접속 주소 | `http://localhost:3000` 대신 `https://<공인IP>`(사내는 `https://<사내IP>`) |
