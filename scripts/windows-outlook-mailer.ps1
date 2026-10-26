@@ -34,8 +34,13 @@ function Iso([datetime]$value) { return $value.ToUniversalTime().ToString('yyyy-
 
 $script:Outlook = $null
 function Get-Outlook {
-    if ($script:Outlook) { try { $null = $script:Outlook.Session.CurrentUser; return $script:Outlook } catch { $script:Outlook = $null } }
+    # A cached COM object goes stale when Outlook is closed or restarted (RPC server unavailable, 0x800706BA).
+    # Check it with a real call and start/attach to Outlook again if it no longer answers.
+    if ($script:Outlook) {
+        try { $null = $script:Outlook.GetNamespace('MAPI').CurrentUser.Name; return $script:Outlook } catch { $script:Outlook = $null }
+    }
     $script:Outlook = New-Object -ComObject Outlook.Application
+    $null = $script:Outlook.GetNamespace('MAPI').CurrentUser.Name
     return $script:Outlook
 }
 function Get-SenderSmtp($ol) {
@@ -47,29 +52,37 @@ function Send-Job([string]$dir) {
     $sending = Join-Path $dir 'job.sending'
     try { Move-Item -LiteralPath $jobPath -Destination $sending -ErrorAction Stop } catch { return }   # canceled or taken
     $result = @{ ok = $false; error = '' }
-    try {
-        $job = Read-JsonFile $sending
-        $ol = Get-Outlook
-        $mail = $ol.CreateItem(0)
-        foreach ($r in @($job.to)) { $x = $mail.Recipients.Add([string]$r.email); $x.Type = 1 }
-        foreach ($r in @($job.cc)) { if ($r) { $x = $mail.Recipients.Add([string]$r.email); $x.Type = 2 } }
-        $null = $mail.Recipients.ResolveAll()
-        $mail.Subject = [string]$job.subject
-        $mail.HTMLBody = [string]$job.html
-        $mail.ReadReceiptRequested = [bool]$job.read_receipt
-        foreach ($a in @($job.attachments)) {
-            if (-not $a) { continue }
-            $path = [IO.Path]::GetFullPath((Join-Path $dir ([string]$a)))
-            if (-not $path.StartsWith($dir, [StringComparison]::OrdinalIgnoreCase)) { throw "Attachment outside job folder: $a" }
-            $null = $mail.Attachments.Add($path)
+    $job = $null
+    try { $job = Read-JsonFile $sending } catch { $result.error = 'Could not read the mail request: ' + $_.Exception.Message }
+    # Up to 3 attempts: if Outlook was closed or restarted, attach to it again and retry.
+    for ($attempt = 1; $job -and $attempt -le 3; $attempt++) {
+        $mail = $null
+        try {
+            $ol = Get-Outlook
+            $mail = $ol.CreateItem(0)
+            foreach ($r in @($job.to)) { $x = $mail.Recipients.Add([string]$r.email); $x.Type = 1 }
+            foreach ($r in @($job.cc)) { if ($r) { $x = $mail.Recipients.Add([string]$r.email); $x.Type = 2 } }
+            $null = $mail.Recipients.ResolveAll()
+            $mail.Subject = [string]$job.subject
+            $mail.HTMLBody = [string]$job.html
+            $mail.ReadReceiptRequested = [bool]$job.read_receipt
+            foreach ($a in @($job.attachments)) {
+                if (-not $a) { continue }
+                $path = [IO.Path]::GetFullPath((Join-Path $dir ([string]$a)))
+                if (-not $path.StartsWith($dir, [StringComparison]::OrdinalIgnoreCase)) { throw "Attachment outside job folder: $a" }
+                $null = $mail.Attachments.Add($path)
+            }
+            $mail.Send()
+            $result = @{ ok = $true; sent_at = (Iso (Get-Date)); account = (Get-SenderSmtp $ol) }
+            Write-Log ("sent mail-" + $job.id + ' ' + $job.subject + ' (attempt ' + $attempt + ')')
+            break
+        } catch {
+            $result = @{ ok = $false; error = ('Outlook send failed: ' + $_.Exception.Message) }
+            Write-Log ("send attempt " + $attempt + " failed " + $dir + ': ' + $_.Exception.Message)
+            $script:Outlook = $null
+            if ($mail) { try { $mail.Delete() } catch {} ; $mail = $null }
+            if ($attempt -lt 3) { Start-Sleep -Seconds (10 * $attempt) }
         }
-        $mail.Send()
-        $result = @{ ok = $true; sent_at = (Iso (Get-Date)); account = (Get-SenderSmtp $ol) }
-        Write-Log ("sent mail-" + $job.id + ' ' + $job.tag)
-    } catch {
-        $result = @{ ok = $false; error = ('Outlook send failed: ' + $_.Exception.Message) }
-        Write-Log ("send failed " + $dir + ': ' + $_.Exception.Message)
-        $script:Outlook = $null
     }
     Write-JsonFile (Join-Path $dir 'result.json') $result
 }

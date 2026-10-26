@@ -179,6 +179,7 @@ powershell.exe -NoProfile -ExecutionPolicy RemoteSigned -File '.\scripts\windows
   - 메일은 이 PC의 Outlook(내 계정)으로 나갑니다. 본문에 기안 내용·참고 링크·첨부 목록이 들어가고, 기안서 PDF와 첨부파일(합계 20MB 이하일 때)이 붙습니다. 보낸 메일은 Outlook 보낸편지함에 남습니다.
   - 메일이 발송되면 기안 상태가 자동으로 **완료**로 바뀝니다. 상태는 **작성 중 / 완료** 두 가지입니다.
   - 기안을 다시 열면 아래쪽 **메일 발송 기록**에서 발송 대기·발송 완료·발송 실패를 볼 수 있습니다. 상대방이 읽었는지는 확인하지 않습니다.
+  - **발송 실패**가 보이면 기안을 열어 **저장** → **확인**을 눌러 다시 보냅니다. 도우미는 Outlook을 닫았다 다시 연 경우(오류 0x800706BA 'RPC 서버를 사용할 수 없습니다') 스스로 Outlook에 다시 연결해 최대 3번까지 시도합니다(2026-10-26).
   - 실제 발송은 **Outlook 발송 도우미**가 합니다. 이 PC에 로그인해 있으면 자동으로 실행되고 20초 안에 보냅니다. 로그인하지 않은 동안 요청한 메일은 '발송 대기'로 남았다가 로그인하면 발송됩니다.
   - 도우미 설치(처음 한 번, 관리자 권한 불필요): PowerShell에서 `powershell -ExecutionPolicy Bypass -File scripts\windows-outlook-mailer-install.ps1`. 제거는 같은 명령에 `-Remove`를 붙입니다. 기록은 `data\mailer\helper.log`.
 - 상태는 진행 상황을 표시하는 용도이며, 포털 안에서 결재가 이루어지지는 않습니다.
