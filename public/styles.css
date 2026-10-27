@@ -334,3 +334,5 @@ dialog:has(.draft-form){max-width:960px}.draft-filters{grid-template-columns:min
 .nas-alias{font-weight:700;text-align:left}.nas-alias[aria-expanded=true]{text-decoration:underline}.nas-real{overflow-wrap:anywhere}.nas-real[hidden]{display:none}.nas-alias-form{margin-top:18px;padding-top:16px;border-top:1px solid var(--line)}.nas-alias-form h3{margin:0;font-size:.9375rem}.nas-alias-form small{font-weight:400}
 /* 2026-10-27 자료 관리 폴더 트리 글자 크기를 가운데 목록의 이름(.file-name, 14px)과 같게 */
 .folder-tree-link{font-size:.875rem;height:32px}
+.update-notice{position:fixed;right:24px;bottom:24px;z-index:50;display:flex;gap:14px;align-items:center;max-width:min(520px,calc(100vw - 32px));padding:14px 16px;border:1px solid var(--line);border-radius:10px;background:var(--nav-bg,#fff);color:var(--ink);box-shadow:0 10px 30px rgba(0,0,0,.15);font-size:.875rem}[data-theme=dark] .update-notice{background:#1a2e24}
+.update-notice button{flex:none;white-space:nowrap}

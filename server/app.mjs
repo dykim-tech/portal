@@ -8,7 +8,7 @@ import multer from 'multer';
 import { initializeUploadChunks, createUploadMiddleware, storeUpload, purgeOrphanChunks, discardUpload, deleteUploadChunks, getStoredFile, sendStoredFile } from './uploads.mjs';
 import { randomBytes, scrypt as scryptCallback, timingSafeEqual, createHash } from 'node:crypto';
 import { promisify } from 'node:util';
-import { existsSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, unlinkSync, readdirSync, statSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openDatabase, transaction, scanDeadlines } from './db.mjs';
@@ -114,8 +114,20 @@ export function createPortal(options = {}) {
   const dummyHashPromise = passwordHash(randomBytes(24).toString('hex'));
   app.disable('x-powered-by');
   app.use(helmet({ strictTransportSecurity: secure ? undefined : false, contentSecurityPolicy: { directives: { 'upgrade-insecure-requests': secure ? [] : null, 'script-src': ["'self'"], 'style-src': ["'self'"], 'img-src': ["'self'", 'data:'] } } }));
+  // 화면 파일(public) 버전: 파일 이름·크기·수정 시각으로 만든 짧은 해시(15초마다 다시 계산).
+  // 열어 둔 포털 화면이 API 응답의 X-Portal-Version이 바뀐 것을 보면 '새로고침' 안내를 띄운다(2026-10-27).
+  const publicDir = resolve(dirname(fileURLToPath(import.meta.url)), '../public');
+  let assetVersion = { at: 0, value: '' };
+  const currentAssetVersion = () => {
+    if (Date.now() - assetVersion.at < 15000) return assetVersion.value;
+    let value = '';
+    try { value = createHash('sha1').update(readdirSync(publicDir).filter(name => /\.(js|css|html)$/.test(name)).sort().map(name => { const info = statSync(join(publicDir, name)); return `${name}:${info.size}:${Math.floor(info.mtimeMs)}`; }).join('|')).digest('hex').slice(0, 12); } catch {}
+    assetVersion = { at: Date.now(), value };
+    return value;
+  };
   app.use('/api', (req, res, next) => {
     res.set('Cache-Control', 'no-store');
+    const version = currentAssetVersion(); if (version) res.set('X-Portal-Version', version);
     if (!['GET','HEAD','OPTIONS'].includes(req.method) && (!allowedOrigins.has(req.get('Origin')) || req.get('X-Portal-Request') !== '1')) return res.status(403).json({ error: '요청 출처를 확인할 수 없습니다. 설정된 포털 주소로 접속해 주세요.' });
     next();
   });

@@ -45,6 +45,16 @@ test('library stores web links in folders and lists them with folders and files'
     assert.deepEqual(await order('sort=created_at&direction=asc'), ['제품 매뉴얼', 'www.example.com/docs']);
     assert.deepEqual(await order('sort=created_at&direction=desc'), ['www.example.com/docs', '제품 매뉴얼']);
     assert.deepEqual(await order('sort=name&direction=desc'), ['제품 매뉴얼', 'www.example.com/docs']);
+    // 하위 폴더도 같은 정렬
+    const sub = async name => (await request('/folders', 'POST', { name, parent_id: folderId }, admin)).data;
+    await sub('가 폴더'); await sub('나 폴더');
+    portal.db.prepare("UPDATE folders SET created_at=? WHERE name=?").run('2026-03-01T00:00:00.000Z', '가 폴더');
+    portal.db.prepare("UPDATE folders SET created_at=? WHERE name=?").run('2026-04-01T00:00:00.000Z', '나 폴더');
+    const folderOrder = async query => (await request('/library?folder=' + folderId + '&' + query, 'GET', undefined, viewer)).data.folders.map(f => f.name);
+    assert.deepEqual(await folderOrder('sort=created_at&direction=desc'), ['나 폴더', '가 폴더']);
+    assert.deepEqual(await folderOrder('sort=created_at&direction=asc'), ['가 폴더', '나 폴더']);
+    assert.deepEqual(await folderOrder('sort=name&direction=desc'), ['나 폴더', '가 폴더']);
+    for (const f of portal.db.prepare("SELECT id FROM folders WHERE name IN ('가 폴더','나 폴더')").all()) await request('/folders/' + f.id, 'DELETE', undefined, admin);
 
     // 수정·이동
     assert.equal((await request('/library-links/' + named.id, 'PUT', { name: '매뉴얼', url: 'vendor.example/v2' }, admin)).data.link.url, 'https://vendor.example/v2');

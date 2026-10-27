@@ -113,9 +113,21 @@ window.addEventListener('popstate',event=>{
   else updateNav();
 });
 function toast(message){document.querySelector('#toast').textContent=message;clearTimeout(toastTimer);toastTimer=setTimeout(()=>document.querySelector('#toast').textContent='',4500);}
+// 포털 화면 파일이 바뀌면(업데이트) 열어 둔 화면은 예전 파일을 계속 쓰므로, 새로고침 안내를 띄운다(2026-10-27).
+let loadedAssetVersion=null,updateNoticeShown=false;
+function noteAssetVersion(version){
+  if(!version)return;
+  if(loadedAssetVersion===null){loadedAssetVersion=version;return;}
+  if(version===loadedAssetVersion||updateNoticeShown)return;
+  updateNoticeShown=true;
+  const notice=document.createElement('div');notice.className='update-notice';notice.setAttribute('role','status');
+  notice.innerHTML='<span>포털 화면이 업데이트되었습니다. 새로고침하면 바뀐 내용이 적용됩니다.</span><button type="button" class="primary small" data-action="app-reload">새로고침</button>';
+  document.body.append(notice);
+}
 async function api(path,options={}){
   const {body,...rest}=options;
   const response=await fetch('/api'+path,{...rest,headers:{'X-Portal-Request':'1',...(body instanceof FormData?{}:{'Content-Type':'application/json'})},...(body!==undefined?{body:body instanceof FormData?body:JSON.stringify(body)}:{})});
+  noteAssetVersion(response.headers.get('X-Portal-Version'));
   const data=await response.json();
   if(!response.ok){if(response.status===401&&state.user){state.user=null;clearInterval(pollTimer);modal.close();authPage(false);}throw new Error(data.error??'요청을 처리하지 못했습니다.');}
   return data;
@@ -751,6 +763,7 @@ document.addEventListener('click',async event=>{
     if(button.dataset.view){await navigateTo(button.dataset.view);return;}
     if(button.dataset.tableSort){const kind=button.dataset.tableSort,key=button.dataset.sort,config=tableState[kind];if(!tableColumns[kind]?.includes(key))return;config.direction=config.sort===key?(config.direction==='asc'?'desc':'asc'):['updated_at','created_at','work_date','installed_on','completed_on','due_date'].includes(key)?'desc':'asc';config.sort=key;resetListingPage(kind);await renderView();return;}
     const action=button.dataset.action,id=button.dataset.id;if(!action)return;
+    if(action==='app-reload'){location.reload();return;}
     if(action==='view-back'){await navigateBack();return;}
     if(action==='sidebar-toggle'){toggleSidebar();return;}
     if(action==='library-tree-toggle'){toggleLibraryTree();return;}
