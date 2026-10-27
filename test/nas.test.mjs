@@ -5,7 +5,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createPortal } from '../server/app.mjs';
-import { decryptSecret, encryptSecret, parseFilesystems, parseShares, parseUsers, validateNasSettings } from '../server/nas.mjs';
+import { decodeCatV, decryptSecret, encryptSecret, parseFilesystems, parseShares, parseUsers, validateNasSettings } from '../server/nas.mjs';
 
 // openmediavault rpc.php 흉내: 응답 형식과 필드는 OMV 소스(engined/rpc/*.inc)의 반환값을 따른다.
 function fakeOmv({ password = 'nas-pass-1234', failShares = false } = {}) {
@@ -62,6 +62,12 @@ test('NAS settings validation and secret encryption', () => {
 });
 
 test('OMV responses are parsed tolerantly', () => {
+  // OMV가 cat -v 표기로 돌려준 한글 라벨('새 볼륨')을 되돌린다
+  assert.equal(decodeCatV('M-lM-^CM-^H M-kM-3M-<M-kM-%M-('), '새 볼륨');
+  assert.equal(decodeCatV('/dev/sda1'), '/dev/sda1');
+  assert.equal(decodeCatV('M-zz'), 'M-zz');
+  assert.equal(parseFilesystems([{ label: 'M-lM-^CM-^H M-kM-3M-<M-kM-%M-(', devicefile: '/dev/sdb1', uuid: '9CF6' }])[0].name, '새 볼륨');
+  assert.equal(parseShares([{ name: 's', device: 'M-lM-^CM-^H M-kM-3M-<M-kM-%M-(', mntent: { dir: '/srv/a' } }])[0].device, '새 볼륨');
   const [fs] = parseFilesystems([{ devicefile: '/dev/md0', label: 'data', size: '100', available: '40', used: '60.00 B', percentage: 60 }]);
   assert.deepEqual([fs.name, fs.size, fs.available, fs.used, fs.used_text, fs.percentage], ['data', 100, 40, null, '60.00 B', 60]);
   assert.equal(parseFilesystems({ data: [{ size: '-1', available: '-1', used: '-1', percentage: -1 }] })[0].size, null);
@@ -109,6 +115,17 @@ test('NAS API is admin-only, hides the password and reads OMV', async () => {
     assert.deepEqual(omv.calls, ['Session.login', 'FileSystemMgmt.enumerateMountedFilesystems', 'ShareMgmt.enumerateSharedFolders', 'UserMgmt.getUserList', 'Session.logout']);
     assert.deepEqual(nas.filesystems.items.map(f => [f.name, f.size, f.available, f.percentage, f.used_text]), [['/dev/sda1', 62000000000, 50000000000, 17, '9.50 GiB'], ['data', 4000000000000, 1000000000000, 75, '2.73 TiB']]);
     assert.deepEqual(nas.shares.items.map(s => [s.name, s.path, s.status]), [['photos', '/srv/dev-disk-by-uuid-1/photos/', 'OK'], ['backup', 'backup/', 'ENOENT_DB_MNTENT']]);
+    // 디스크 별칭: 관리자만, 마운트 위치로 구분, 공유 볼륨에도 같은 별칭
+    assert.deepEqual(nas.filesystems.items.map(f => [f.key, f.alias]), [['/', ''], ['/srv/dev-disk-by-uuid-1', '']]);
+    assert.equal((await request('/nas/aliases', 'PUT', { aliases: { '/': 'x' } }, viewer)).status, 403);
+    assert.equal((await request('/nas/aliases', 'PUT', { aliases: { '/': 'x'.repeat(51) } }, admin)).status, 400);
+    assert.deepEqual((await request('/nas/aliases', 'PUT', { aliases: { '/': ' 로컬 SSD (450GB) ', '/srv/dev-disk-by-uuid-1': 'USB HDD (2.7TB)', '/none': '' } }, admin)).data, { aliases: { '/': '로컬 SSD (450GB)', '/srv/dev-disk-by-uuid-1': 'USB HDD (2.7TB)' } });
+    const aliased = (await request('/nas', 'GET', undefined, admin)).data;
+    assert.deepEqual(aliased.filesystems.items.map(f => f.alias), ['로컬 SSD (450GB)', 'USB HDD (2.7TB)']);
+    assert.deepEqual(aliased.shares.items.map(s => [s.name, s.fs_alias, s.fs_key]), [['photos', 'USB HDD (2.7TB)', '/srv/dev-disk-by-uuid-1'], ['backup', '', '']]);
+    // 비밀번호를 다시 저장해도 별칭은 유지
+    await request('/nas/settings', 'PUT', { url: nasUrl, username: 'admin', password: '' }, admin);
+    assert.equal((await request('/nas', 'GET', undefined, admin)).data.filesystems.items[1].alias, 'USB HDD (2.7TB)');
     assert.deepEqual(nas.users.items.map(u => [u.name, u.comment, u.email, u.groups]), [['dykim', '김동엽', 'dykim@example.test', ['users', 'sambashare']]]);
     assert.ok(!JSON.stringify(nas).includes('nas-pass'));
 

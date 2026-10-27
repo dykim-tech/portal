@@ -66,6 +66,47 @@ const number = value => {
 const list = value => Array.isArray(value) ? value : Array.isArray(value?.data) ? value.data : [];
 const text = value => value == null ? '' : String(value);
 
+// OMV는 한글 볼륨 라벨을 'cat -v' 표기(예: 'M-lM-^CM-^H M-kM-3M-<M-kM-%M-(' = '새 볼륨')로 돌려줄 때가 있다.
+// 이 표기를 원래 UTF-8 글자로 되돌리고, 깨끗하게 되돌릴 수 없으면 받은 그대로 둔다.
+export function decodeCatV(value) {
+  const input = text(value);
+  if (!/M-/.test(input)) return input;
+  const bytes = [];
+  for (let i = 0; i < input.length;) {
+    let high = 0;
+    if (input.startsWith('M-', i)) { high = 0x80; i += 2; }
+    if (input[i] === '^' && i + 1 < input.length && (high || /[@A-Z[\\\]^_?]/.test(input[i + 1]))) { const c = input[i + 1]; bytes.push(high | (c === '?' ? 0x7f : c.charCodeAt(0) ^ 0x40)); i += 2; continue; }
+    const code = input.charCodeAt(i);
+    if (code > 0x7f) return input;
+    bytes.push(high | code); i++;
+  }
+  const decoded = Buffer.from(bytes).toString('utf8');
+  return decoded.includes('\uFFFD') ? input : decoded;
+}
+
+// 디스크 별칭: 마운트 위치(없으면 장치 파일)로 구분한다. 예: '/' → '로컬 SSD (450GB)'.
+export const filesystemKey = fs => fs.mountpoint || fs.device || fs.uuid || '';
+export function validateAliases(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw fail(400, '별칭 형식을 확인해 주세요.');
+  const entries = Object.entries(value);
+  if (entries.length > 30) throw fail(400, '별칭은 30개까지 저장할 수 있습니다.');
+  const result = {};
+  for (const [key, alias] of entries) {
+    const k = String(key).trim(), a = String(alias ?? '').trim();
+    if (!k || k.length > 300) throw fail(400, '별칭 대상을 확인해 주세요.');
+    if (a.length > 50) throw fail(400, '별칭은 50자 이내로 입력해 주세요.');
+    if (a) result[k] = a;
+  }
+  return result;
+}
+export function applyAliases(value, aliases = {}) {
+  if (!value?.filesystems?.items) return value;
+  const filesystems = value.filesystems.items.map(fs => ({ ...fs, key: filesystemKey(fs), alias: aliases[filesystemKey(fs)] ?? '' }));
+  const byMount = new Map(filesystems.filter(fs => fs.mountpoint).map(fs => [fs.mountpoint.replace(/\/+$/, '') || '/', fs]));
+  const shares = value.shares?.items ? { ...value.shares, items: value.shares.items.map(share => { const fs = share.mount ? byMount.get(share.mount.replace(/\/+$/, '') || '/') : null; return { ...share, fs_key: fs?.key ?? '', fs_alias: fs?.alias ?? '' }; }) } : value.shares;
+  return { ...value, filesystems: { ...value.filesystems, items: filesystems }, shares };
+}
+
 export function parseFilesystems(value) {
   return list(value).map(fs => {
     const size = number(fs.size), available = number(fs.available), usedNumber = number(fs.used);
@@ -74,8 +115,8 @@ export function parseFilesystems(value) {
     const usedText = used == null && typeof fs.used === 'string' && fs.used !== '-1' ? fs.used : '';
     const pct = number(fs.percentage);
     return {
-      name: text(fs.label) || text(fs.devicefile) || text(fs.devicename) || text(fs.mountpoint),
-      device: text(fs.devicefile), type: text(fs.type), mountpoint: text(fs.mountpoint), comment: text(fs.comment),
+      name: decodeCatV(fs.label) || text(fs.devicefile) || text(fs.devicename) || text(fs.mountpoint),
+      label: decodeCatV(fs.label), uuid: text(fs.uuid), device: text(fs.devicefile), type: text(fs.type), mountpoint: text(fs.mountpoint), comment: text(fs.comment),
       size: size != null && size >= 0 ? size : null, available: available != null && available >= 0 ? available : null,
       used, used_text: usedText, percentage: pct != null && pct >= 0 ? pct : null,
       warn: number(fs.usagewarnthreshold)
@@ -85,7 +126,7 @@ export function parseFilesystems(value) {
 
 export function parseShares(value) {
   return list(value).map(share => ({
-    name: text(share.name), comment: text(share.comment), device: text(share.device),
+    name: text(share.name), comment: text(share.comment), device: decodeCatV(share.device), mount: text(share.mntent?.dir),
     path: text(share.absdirpath) || [text(share.mntent?.dir), text(share.reldirpath)].filter(Boolean).join('/').replace(/\/{2,}/g, '/'),
     filesystem: text(share.mntent?.type), status: text(share.status) || 'OK', in_use: Boolean(share._used)
   }));
@@ -174,14 +215,20 @@ export function registerNas(app, { db, requireRole, dataDir, fetchImpl }) {
     }
     return pending.promise;
   }
-  app.get('/api/nas', admin, async (req, res) => res.json(await load(req.query.refresh === '1')));
+  // 별칭은 캐시와 상관없이 응답할 때마다 붙여, 바꾸면 바로 보이게 한다.
+  app.get('/api/nas', admin, async (req, res) => res.json(applyAliases(await load(req.query.refresh === '1'), settings().aliases)));
+  app.put('/api/nas/aliases', admin, (req, res) => {
+    const aliases = validateAliases(req.body?.aliases), current = settings();
+    db.prepare("INSERT INTO app_settings(key,value) VALUES('nas',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(JSON.stringify({ ...current, aliases }));
+    res.json({ aliases });
+  });
   app.get('/api/nas/settings', admin, (_req, res) => {
     const s = settings();
     res.json({ url: s.url ?? DEFAULT_URL, username: s.username ?? '', has_password: Boolean(s.secret), configured: Boolean(s.url && s.username && s.secret) });
   });
   app.put('/api/nas/settings', admin, (req, res) => {
     const current = settings(), value = validateNasSettings(req.body, current);
-    const stored = value.clear ? {} : { url: value.url, username: value.username, secret: value.password ? encryptSecret(dataDir, value.password) : current.secret };
+    const stored = value.clear ? {} : { url: value.url, username: value.username, secret: value.password ? encryptSecret(dataDir, value.password) : current.secret, ...(current.aliases ? { aliases: current.aliases } : {}) };
     db.prepare("INSERT INTO app_settings(key,value) VALUES('nas',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(JSON.stringify(stored));
     generation++; cache = null;
     res.json({ url: stored.url ?? DEFAULT_URL, username: stored.username ?? '', has_password: Boolean(stored.secret), configured: !value.clear });
