@@ -38,6 +38,13 @@ test('library stores web links in folders and lists them with folders and files'
     const listed = (await request('/library?folder=' + folderId, 'GET', undefined, viewer)).data;
     assert.deepEqual(listed.links.map(link => link.name), ['www.example.com/docs', '제품 매뉴얼']);
     assert.equal((await request('/library?folder=' + folderId + '&q=vendor', 'GET', undefined, admin)).data.links.length, 1, 'search matches the address too');
+    // 링크도 자료 정렬(등록일·이름, 오름·내림)을 따른다
+    portal.db.prepare("UPDATE library_links SET created_at=? WHERE id=?").run('2026-01-01T00:00:00.000Z', named.id);
+    portal.db.prepare("UPDATE library_links SET created_at=? WHERE id=?").run('2026-02-01T00:00:00.000Z', created.data.link.id);
+    const order = async query => (await request('/library?folder=' + folderId + '&' + query, 'GET', undefined, viewer)).data.links.map(link => link.name);
+    assert.deepEqual(await order('sort=created_at&direction=asc'), ['제품 매뉴얼', 'www.example.com/docs']);
+    assert.deepEqual(await order('sort=created_at&direction=desc'), ['www.example.com/docs', '제품 매뉴얼']);
+    assert.deepEqual(await order('sort=name&direction=desc'), ['제품 매뉴얼', 'www.example.com/docs']);
 
     // 수정·이동
     assert.equal((await request('/library-links/' + named.id, 'PUT', { name: '매뉴얼', url: 'vendor.example/v2' }, admin)).data.link.url, 'https://vendor.example/v2');
