@@ -340,7 +340,7 @@ export function createPortal(options = {}) {
   registerOperations(app, { db, requireRole, instanceId, selfCheck });
   registerUsage(app, { db, requireRole, dataDir, backupDir });
   registerLeave(app, { db, requireRole });
-  registerNas(app, { db, requireRole, dataDir, fetchImpl: options.nasFetch });
+  registerNas(app, { db, requireRole, dataDir, fetchImpl: options.nasFetch, sshRunner: options.nasSshRunner, sshPlatform: options.nasSshPlatform, measureCheckMs: options.nasMeasureCheckMs });
   purgeOrphanChunks(db);
   registerReports(app, { db });
   const pruneBackups = registerBackups(app, { db, backupDir, requireRole, maintenance, onRestore: options.onRestore });

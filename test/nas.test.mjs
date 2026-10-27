@@ -163,3 +163,58 @@ test('one failing OMV section does not hide the others', async () => {
     assert.equal(omv.calls.at(-1), 'Session.logout');
   } finally { await new Promise(r => omv.server.close(r)); rmSync(dataDir, { recursive: true, force: true }); }
 });
+
+test('share sizes: SSH key, du via SSH, size and percent of the disk', async () => {
+  const { writeFileSync: write, mkdirSync: mkdir } = await import('node:fs');
+  const { duCommand, parseDu, shellQuote } = await import('../server/nas-ssh.mjs');
+  assert.equal(shellQuote("/srv/a b/it's"), `'/srv/a b/it'\\''s'`);
+  assert.throws(() => shellQuote('relative/path'));
+  assert.match(duCommand(['/srv/x/']), /^LC_ALL=C nice -n 19 ionice -c3 du -s -B1 -- '\/srv\/x\/'$/);
+  assert.deepEqual(parseDu('100\t/srv/x/\n20\t/srv/y\ngarbage\n'), { '/srv/x': 100, '/srv/y': 20 });
+
+  const origin = 'http://localhost:3100', dataDir = mkdtempSync(join(tmpdir(), 'portal-nas-ssh-'));
+  const omv = fakeOmv(); omv.server.listen(0, '127.0.0.1'); await new Promise(r => omv.server.once('listening', r));
+  const nasUrl = 'http://127.0.0.1:' + omv.server.address().port;
+  const calls = [];
+  let duOut = '1000000000000\t/srv/dev-disk-by-uuid-1/photos/\n', duErr = '';
+  const sshRunner = async (file, args) => {
+    calls.push([file, args]);
+    if (file === 'ssh-keygen') { const path = args[args.indexOf('-f') + 1]; mkdir(join(path, '..'), { recursive: true }); write(path, 'PRIVATE'); write(path + '.pub', 'ssh-ed25519 AAAATEST dykim-portal-nas-usage\n'); return { code: 0, stdout: '', stderr: '' }; }
+    return { code: duErr ? 1 : 0, stdout: duOut, stderr: duErr };
+  };
+  const portal = createPortal({ dataDir, backupDir: join(dataDir, 'backups'), origin, selfCheck: false, nasSshRunner: sshRunner, nasSshPlatform: 'linux', nasMeasureCheckMs: 0 });
+  const server = portal.app.listen(0, '127.0.0.1'); await new Promise(resolve => server.once('listening', resolve));
+  const base = 'http://127.0.0.1:' + server.address().port;
+  const request = async (path, method = 'GET', body, cookie = '') => { const r = await fetch(base + '/api' + path, { method, headers: { Origin: origin, 'X-Portal-Request': '1', Cookie: cookie, 'Content-Type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }); return { status: r.status, data: await r.json().catch(() => null) }; };
+  try {
+    const admin = (await fetch(base + '/api/auth/setup', { method: 'POST', headers: { Origin: origin, 'X-Portal-Request': '1', 'Content-Type': 'application/json' }, body: JSON.stringify({ token: readFileSync(portal.tokenPath, 'utf8'), name: '관리자', username: 'admin', email: 'admin@example.test', password: 'test-password-1234' }) })).headers.get('set-cookie').split(';')[0];
+    await request('/nas/settings', 'PUT', { url: nasUrl, username: 'admin', password: 'nas-pass-1234' }, admin);
+    let ssh = (await request('/nas/ssh', 'GET', undefined, admin)).data;
+    assert.deepEqual([ssh.user, ssh.port, ssh.saved, ssh.public_key, ssh.host], ['dykim', 22, false, '', '127.0.0.1']);
+    assert.equal((await request('/nas/ssh', 'PUT', { user: 'bad user', port: 22 }, admin)).status, 400);
+    assert.equal((await request('/nas/ssh', 'PUT', { user: 'dykim', port: 22 }, admin)).status, 200);
+    assert.equal((await request('/nas/ssh/measure', 'POST', {}, admin)).status, 409, 'no key yet');
+    assert.equal((await request('/nas/ssh/key', 'POST', {}, admin)).data.public_key, 'ssh-ed25519 AAAATEST dykim-portal-nas-usage');
+    const measured = await request('/nas/ssh/measure', 'POST', {}, admin);
+    assert.equal(measured.status, 200, JSON.stringify(measured.data)); assert.equal(measured.data.count, 1);
+    const [file, args] = calls.at(-1);
+    assert.equal(file, 'ssh');
+    assert.ok(args.includes('BatchMode=yes') && args.includes('dykim@127.0.0.1'));
+    assert.match(args.at(-1), /du -s -B1 -- '\/srv\/dev-disk-by-uuid-1\/photos\/'$/, 'only absolute share paths, quoted');
+    const nas = (await request('/nas', 'GET', undefined, admin)).data;
+    const photos = nas.shares.items.find(s => s.name === 'photos');
+    assert.deepEqual([photos.size, photos.size_pct], [1000000000000, 25]);
+    assert.equal(nas.shares.items.find(s => s.name === 'backup').size, null);
+    assert.ok(nas.share_sizes.measured_at && !nas.share_sizes.error);
+    // 접속 실패: 오류를 보여 주되 예전 결과는 남김
+    duOut = ''; duErr = 'dykim@127.0.0.1: Permission denied (publickey).';
+    const failed = await request('/nas/ssh/measure', 'POST', {}, admin);
+    assert.equal(failed.status, 502); assert.match(failed.data.error, /Permission denied/);
+    const after = (await request('/nas', 'GET', undefined, admin)).data;
+    assert.equal(after.shares.items.find(s => s.name === 'photos').size, 1000000000000);
+    assert.match(after.share_sizes.error, /Permission denied/);
+    // 비밀번호를 다시 저장해도 SSH 설정 유지
+    await request('/nas/settings', 'PUT', { url: nasUrl, username: 'admin', password: '' }, admin);
+    assert.equal((await request('/nas/ssh', 'GET', undefined, admin)).data.saved, true);
+  } finally { await new Promise(r => server.close(r)); await new Promise(r => omv.server.close(r)); portal.db.close(); rmSync(dataDir, { recursive: true, force: true }); }
+});

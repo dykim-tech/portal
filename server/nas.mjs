@@ -1,6 +1,7 @@
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { createShareSizer, validateSshSettings, MEASURE_EVERY_MS } from './nas-ssh.mjs';
 
 // NAS 현황: openmediavault(OMV) 관리 화면이 쓰는 JSON-RPC(/rpc.php)로
 // 파일시스템 사용량, 공유 폴더, 사용자 목록을 읽어 대시보드에 보여준다(읽기 전용).
@@ -189,7 +190,20 @@ export async function readNas(client) {
   return sections;
 }
 
-export function registerNas(app, { db, requireRole, dataDir, fetchImpl }) {
+// 공유 볼륨 크기(SSH du 결과)를 붙인다: 크기와 그 디스크 전체 용량 대비 비율(%).
+export function applyShareSizes(value, stored = {}) {
+  if (!value?.shares?.items) return value;
+  const sizes = stored.sizes ?? {}, disks = new Map((value.filesystems?.items ?? []).filter(fs => fs.mountpoint).map(fs => [fs.mountpoint.replace(/\/+$/, '') || '/', fs]));
+  const items = value.shares.items.map(share => {
+    const size = sizes[(share.path || '').replace(/\/+$/, '')];
+    const disk = share.mount ? disks.get(share.mount.replace(/\/+$/, '') || '/') : null;
+    return { ...share, size: Number.isFinite(size) ? size : null, size_pct: Number.isFinite(size) && disk?.size ? Math.round(size / disk.size * 1000) / 10 : null, disk_size: disk?.size ?? null };
+  });
+  const { sizes: _omit, ...meta } = stored;
+  return { ...value, shares: { ...value.shares, items }, share_sizes: meta };
+}
+
+export function registerNas(app, { db, requireRole, dataDir, fetchImpl, sshRunner, sshPlatform, measureCheckMs }) {
   db.exec('CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
   const admin = requireRole(['admin']);
   const settings = () => { try { return JSON.parse(db.prepare("SELECT value FROM app_settings WHERE key='nas'").get()?.value ?? '{}'); } catch { return {}; } };
@@ -215,8 +229,58 @@ export function registerNas(app, { db, requireRole, dataDir, fetchImpl }) {
     }
     return pending.promise;
   }
-  // 별칭은 캐시와 상관없이 응답할 때마다 붙여, 바꾸면 바로 보이게 한다.
-  app.get('/api/nas', admin, async (req, res) => res.json(applyAliases(await load(req.query.refresh === '1'), settings().aliases)));
+  // 공유 볼륨 크기(SSH): 설정 'nas'.ssh = {user, port}, 결과 'nas_share_sizes'
+  const sizer = createShareSizer({ dataDir, ...(sshRunner ? { runner: sshRunner } : {}), ...(sshPlatform ? { platform: sshPlatform } : {}) });
+  const readSizes = () => { try { return JSON.parse(db.prepare("SELECT value FROM app_settings WHERE key='nas_share_sizes'").get()?.value ?? '{}'); } catch { return {}; } };
+  const writeSizes = value => db.prepare("INSERT INTO app_settings(key,value) VALUES('nas_share_sizes',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(JSON.stringify(value));
+  let measuring = null;
+  async function measureShares() {
+    if (measuring) return measuring;
+    measuring = (async () => {
+      const s = settings(), previous = readSizes();
+      if (!s.ssh?.user) throw fail(409, 'SSH 사용자를 먼저 저장해 주세요.');
+      const nas = await load(true);
+      if (nas.error || !nas.shares?.items) throw fail(502, nas.error || nas.shares?.error || '공유 볼륨 목록을 읽지 못했습니다.');
+      const paths = [...new Set(nas.shares.items.map(share => share.path).filter(path => path?.startsWith('/')))];
+      const started = new Date().toISOString();
+      try {
+        const result = await sizer.measure({ host: new URL(s.url).hostname, user: s.ssh.user, port: s.ssh.port ?? 22, paths });
+        const value = { measured_at: new Date().toISOString(), started_at: started, sizes: result.sizes, partial: result.partial, warnings: result.warnings, duration_ms: result.duration_ms, error: '' };
+        if (db.isOpen) writeSizes(value);
+        return value;
+      } catch (error) {
+        const value = { ...previous, error: error.expose ? error.message : '용량을 재지 못했습니다.', failed_at: new Date().toISOString() };
+        if (db.isOpen) writeSizes(value);
+        throw error;
+      }
+    })();
+    try { return await measuring; } finally { measuring = null; }
+  }
+  // 6시간마다 자동으로 다시 잰다(키와 SSH 사용자가 있을 때만). 서버 시작 직후에는 2분 뒤 처음 확인한다.
+  const due = () => { const s = settings(), last = readSizes(); const at = Date.parse(last.measured_at ?? last.failed_at ?? 0) || 0; return Boolean(s.url && s.secret && s.ssh?.user && sizer.publicKey()) && Date.now() - at > MEASURE_EVERY_MS; };
+  if (measureCheckMs !== 0) {
+    const tick = () => { if (!db.isOpen || measuring || !due()) return; measureShares().catch(error => console.error('NAS share size:', error.message)); };
+    const first = setTimeout(tick, 120_000); first.unref?.();
+    const timer = setInterval(tick, measureCheckMs ?? 600_000); timer.unref?.();
+  }
+  app.get('/api/nas/ssh', admin, (_req, res) => { const s = settings(); res.json({ user: s.ssh?.user ?? 'dykim', port: s.ssh?.port ?? 22, saved: Boolean(s.ssh?.user), public_key: sizer.publicKey(), host: s.url ? new URL(s.url).hostname : '', running: Boolean(measuring), last: (({ sizes, ...meta }) => meta)(readSizes()) }); });
+  app.put('/api/nas/ssh', admin, (req, res) => {
+    const ssh = validateSshSettings(req.body), current = settings();
+    db.prepare("INSERT INTO app_settings(key,value) VALUES('nas',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(JSON.stringify({ ...current, ssh }));
+    res.json(ssh);
+  });
+  app.post('/api/nas/ssh/key', admin, async (req, res) => res.json({ public_key: await sizer.createKey(req.body?.force === true) }));
+  // 크기 재기는 몇 분 걸릴 수 있어 20초까지만 기다린다. 그 안에 끝나면 결과를, 아니면 '재는 중'을 돌려준다(오류는 바로 보임).
+  app.post('/api/nas/ssh/measure', admin, async (_req, res) => {
+    const job = measureShares();
+    job.catch(error => console.error('NAS share size:', error.message));
+    const value = await Promise.race([job, new Promise(resolve => { const t = setTimeout(() => resolve(null), 20_000); t.unref?.(); })]);
+    if (!value) return res.status(202).json({ running: true });
+    const { sizes, ...meta } = value; res.json({ ...meta, count: Object.keys(sizes).length });
+  });
+
+  // 별칭·공유 볼륨 크기는 캐시와 상관없이 응답할 때마다 붙여, 바꾸면 바로 보이게 한다.
+  app.get('/api/nas', admin, async (req, res) => res.json(applyShareSizes(applyAliases(await load(req.query.refresh === '1'), settings().aliases), { ...readSizes(), running: Boolean(measuring) })));
   app.put('/api/nas/aliases', admin, (req, res) => {
     const aliases = validateAliases(req.body?.aliases), current = settings();
     db.prepare("INSERT INTO app_settings(key,value) VALUES('nas',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(JSON.stringify({ ...current, aliases }));
@@ -228,7 +292,7 @@ export function registerNas(app, { db, requireRole, dataDir, fetchImpl }) {
   });
   app.put('/api/nas/settings', admin, (req, res) => {
     const current = settings(), value = validateNasSettings(req.body, current);
-    const stored = value.clear ? {} : { url: value.url, username: value.username, secret: value.password ? encryptSecret(dataDir, value.password) : current.secret, ...(current.aliases ? { aliases: current.aliases } : {}) };
+    const stored = value.clear ? {} : { url: value.url, username: value.username, secret: value.password ? encryptSecret(dataDir, value.password) : current.secret, ...(current.aliases ? { aliases: current.aliases } : {}), ...(current.ssh ? { ssh: current.ssh } : {}) };
     db.prepare("INSERT INTO app_settings(key,value) VALUES('nas',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").run(JSON.stringify(stored));
     generation++; cache = null;
     res.json({ url: stored.url ?? DEFAULT_URL, username: stored.username ?? '', has_password: Boolean(stored.secret), configured: !value.clear });
