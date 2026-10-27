@@ -32,20 +32,19 @@ function Write-JsonFile([string]$path, $value) {
 function Read-JsonFile([string]$path) { return ([IO.File]::ReadAllText($path, [Text.Encoding]::UTF8) | ConvertFrom-Json) }
 function Iso([datetime]$value) { return $value.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ') }
 
+# Outlook is touched ONLY while a mail is being sent, and the helper never reads address information
+# (Namespace.CurrentUser, AddressEntry, Recipient details, ResolveAll). Reading those is what makes Outlook show
+# "a program is trying to access e-mail address information" (object model guard). The COM object is released
+# after each send, so a closed or restarted Outlook never leaves a stale connection (0x800706BA) behind.
 $script:Outlook = $null
 function Get-Outlook {
-    # A cached COM object goes stale when Outlook is closed or restarted (RPC server unavailable, 0x800706BA).
-    # Check it with a real call and start/attach to Outlook again if it no longer answers.
-    if ($script:Outlook) {
-        try { $null = $script:Outlook.GetNamespace('MAPI').CurrentUser.Name; return $script:Outlook } catch { $script:Outlook = $null }
-    }
-    $script:Outlook = New-Object -ComObject Outlook.Application
-    $null = $script:Outlook.GetNamespace('MAPI').CurrentUser.Name
+    if (-not $script:Outlook) { $script:Outlook = New-Object -ComObject Outlook.Application }
     return $script:Outlook
 }
-function Get-SenderSmtp($ol) {
-    try { $u = $ol.Session.CurrentUser.AddressEntry.GetExchangeUser(); if ($u -and $u.PrimarySmtpAddress) { return [string]$u.PrimarySmtpAddress } } catch {}
-    try { return [string]$ol.Session.Accounts.Item(1).SmtpAddress } catch { return '' }
+function Close-Outlook {
+    if ($script:Outlook) { try { [void][Runtime.InteropServices.Marshal]::ReleaseComObject($script:Outlook) } catch {} }
+    $script:Outlook = $null
+    [GC]::Collect(); [GC]::WaitForPendingFinalizers()
 }
 function Send-Job([string]$dir) {
     $jobPath = Join-Path $dir 'job.json'
@@ -60,9 +59,9 @@ function Send-Job([string]$dir) {
         try {
             $ol = Get-Outlook
             $mail = $ol.CreateItem(0)
-            foreach ($r in @($job.to)) { $x = $mail.Recipients.Add([string]$r.email); $x.Type = 1 }
-            foreach ($r in @($job.cc)) { if ($r) { $x = $mail.Recipients.Add([string]$r.email); $x.Type = 2 } }
-            $null = $mail.Recipients.ResolveAll()
+            # Plain SMTP addresses; Outlook resolves them when sending (no address-book lookups here).
+            $mail.To = ((@($job.to) | Where-Object { $_ } | ForEach-Object { [string]$_.email }) -join '; ')
+            $mail.CC = ((@($job.cc) | Where-Object { $_ } | ForEach-Object { [string]$_.email }) -join '; ')
             $mail.Subject = [string]$job.subject
             $mail.HTMLBody = [string]$job.html
             $mail.ReadReceiptRequested = [bool]$job.read_receipt
@@ -73,17 +72,19 @@ function Send-Job([string]$dir) {
                 $null = $mail.Attachments.Add($path)
             }
             $mail.Send()
-            $result = @{ ok = $true; sent_at = (Iso (Get-Date)); account = (Get-SenderSmtp $ol) }
+            $result = @{ ok = $true; sent_at = (Iso (Get-Date)); account = '' }
             Write-Log ("sent mail-" + $job.id + ' ' + $job.subject + ' (attempt ' + $attempt + ')')
             break
         } catch {
             $result = @{ ok = $false; error = ('Outlook send failed: ' + $_.Exception.Message) }
             Write-Log ("send attempt " + $attempt + " failed " + $dir + ': ' + $_.Exception.Message)
-            $script:Outlook = $null
             if ($mail) { try { $mail.Delete() } catch {} ; $mail = $null }
+            Close-Outlook
             if ($attempt -lt 3) { Start-Sleep -Seconds (10 * $attempt) }
         }
     }
+    if ($mail) { try { [void][Runtime.InteropServices.Marshal]::ReleaseComObject($mail) } catch {} ; $mail = $null }
+    Close-Outlook
     Write-JsonFile (Join-Path $dir 'result.json') $result
 }
 
@@ -105,13 +106,11 @@ Write-Log ('helper started, data folder ' + $DataDir)
 while ($true) {
     $beat = @{ at = (Iso (Get-Date)); pid = $PID; account = ''; error = '' }
     try {
-        $ol = Get-Outlook
-        $beat.account = Get-SenderSmtp $ol
         Invoke-Outbox
     } catch {
         $beat.error = $_.Exception.Message
         Write-Log ('loop error: ' + $_.Exception.Message)
-        $script:Outlook = $null
+        Close-Outlook
     }
     try { Write-JsonFile (Join-Path $Root 'heartbeat.json') $beat } catch {}
     if ($Once) { break }
