@@ -67,6 +67,7 @@ export function portalHeroHtml({ user, d, names, shown, chips = [] }) {
       <div class="ph-hero-text"><p class="ph-eyebrow">나의 업무를 잇는 작업 공간</p><h1>필요한 업무를,<br><span>한 곳에서 빠르게</span></h1>
         <p class="ph-lead">${esc(user.name)}님, 오늘은 ${esc(today)}입니다. 미완료 할 일 <b>${d.openTodoCount}건</b>, 읽지 않은 알림 <b>${d.counts.unread}건</b>이 있습니다.</p>
         <form class="ph-search" id="portal-search" role="search"><input name="q" maxlength="100" placeholder="포털 전체(기록 내용·자료·첨부 파일 이름)에서 찾아보세요" aria-label="포털 통합 검색"><button type="submit">검색 ${portalIcon('search', 20)}</button></form>
+        <p class="ph-search-msg" id="portal-search-msg" role="status" aria-live="polite" hidden></p>
         ${chipHtml ? `<div class="ph-chips"><span>자주 쓰는 메뉴</span>${chipHtml}</div>` : ''}</div>
       <aside class="ph-calendar" id="portal-calendar" aria-label="달력"><p class="muted">달력을 불러오는 중입니다.</p></aside>
     </div></section>
@@ -112,6 +113,8 @@ export async function portalSearch({ api, q }) {
     const more = group.view ? `<button class="small" data-view="${group.view}">목록 보기</button>` : '';
     return `<section class="panel ph-result"><div class="panel-head"><h2>${esc(group.label)} <small>${group.total}건</small></h2>${more}</div>${rows}${group.total > group.rows.length ? `<p class="ph-more muted">외 ${group.total - group.rows.length}건 — 검색어를 더 넣어 좁혀 보세요.</p>` : ''}</section>`;
   };
-  return `<div class="ph-section-head"><h2>‘${esc(data.q)}’ 검색 결과 <small>${data.total}건</small></h2><p>포털 전체 · 분류마다 최대 8건 · 누르면 해당 항목을 엽니다</p></div>${data.groups.length ? `<div class="ph-result-grid">${data.groups.map(panel).join('')}</div>` : '<p class="muted">찾은 항목이 없습니다. 띄어쓰기로 나눈 낱말이 모두 들어 있는 항목만 찾습니다.</p>'}`;
+  // 찾은 항목이 없으면 결과 영역을 열지 않고 검색창 아래에 안내만 한다(total 0).
+  if (!data.groups.length) return { total: 0, html: '' };
+  return { total: data.total, html: `<div class="ph-section-head"><h2>‘${esc(data.q)}’ 검색 결과 <small>${data.total}건</small></h2><p>포털 전체 · 분류마다 최대 8건 · 누르면 해당 항목을 엽니다</p></div><div class="ph-result-grid">${data.groups.map(panel).join('')}</div>` };
 }
 export { kindView };
