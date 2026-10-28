@@ -19,6 +19,8 @@ import { initializeProjects, registerProjects } from './projects.mjs';
 import { registerOperations } from './operations.mjs';
 import { registerLeave } from './leave.mjs';
 import { registerNas } from './nas.mjs';
+import { registerSearch } from './search.mjs';
+import { registerHolidays } from './holidays.mjs';
 import { createMenuSettings } from './menus.mjs';
 import { createSelfCheck } from './self-check.mjs';
 import { registerUsage } from './usage.mjs';
@@ -87,7 +89,7 @@ export function createPortal(options = {}) {
   const db = openDatabase(dataDir);
   const menuSettings = createMenuSettings(db);
   // 로그인 사용자 정보에 포털 전체 메뉴 표시 설정(숨긴 메뉴)을 함께 보낸다.
-  const userView = user => ({ ...publicUser(user), hidden_menus: menuSettings.hidden() });
+  const userView = user => ({ ...publicUser(user), hidden_menus: menuSettings.hidden(), quick_menus: menuSettings.quick() });
   initializeFeatures(db);
   initializeUploadChunks(db);
   initializeWork(db);
@@ -341,6 +343,8 @@ export function createPortal(options = {}) {
   registerUsage(app, { db, requireRole, dataDir, backupDir });
   registerLeave(app, { db, requireRole });
   registerNas(app, { db, requireRole, dataDir, fetchImpl: options.nasFetch, sshRunner: options.nasSshRunner, sshPlatform: options.nasSshPlatform, measureCheckMs: options.nasMeasureCheckMs });
+  registerSearch(app, { db });
+  registerHolidays(app, { db, fetchImpl: 'holidayFetch' in options ? options.holidayFetch : globalThis.fetch });
   purgeOrphanChunks(db);
   registerReports(app, { db });
   const pruneBackups = registerBackups(app, { db, backupDir, requireRole, maintenance, onRestore: options.onRestore });
