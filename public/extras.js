@@ -59,7 +59,7 @@ export function createExtras(ctx) {
       x+=Math.ceil((w+TODO_GAP)/TODO_COL)*TODO_COL;rowHeight=Math.max(rowHeight,h);} // 다음 메모도 칸 경계에서 시작
     return settleTodoBoard(); // 빈 공간 없이 위로 정돈하고 바뀐 위치를 저장
   }
-  // 완료 보드 크기 조절(2026-10-30): 왼쪽 경계(세로 막대)를 끌어 너비를, 아래 손잡이(가로 막대)를 끌어 높이를 바꾼다.
+  // 완료 보드 크기 조절(2026-10-30): 보드 오른쪽 아래 모서리 손잡이를 끌어 너비와 높이를 함께 바꾼다.
   // 크기는 이 브라우저에 사용자별로 기억하고, 경계를 두 번 누르면 기본 크기(너비 540px·높이 690px)로 돌아간다.
   const doneSizeKey=()=>`portal-done-board-${state.user.id}`;
   const DONE_DEFAULT={width:540,height:690};
@@ -75,23 +75,25 @@ export function createExtras(ctx) {
   // 시험 환경처럼 document 이벤트를 쓸 수 없으면 건너뛴다.
   const onDocument=(type,fn)=>{if(typeof globalThis.document?.addEventListener==='function')document.addEventListener(type,fn);};
   let doneDrag=null;
+  // 오른쪽 아래 모서리 손잡이: 오른쪽으로 끌면 넓게, 아래로 끌면 길게(완료 보드는 오른쪽에 붙어 있어 넓어질 때 왼쪽으로 늘어난다).
   onDocument('pointerdown',event=>{
-    const bar=event.target.closest?.('.done-splitter,.done-height-handle');if(!bar||event.button!==0)return;
-    event.preventDefault();const board=document.querySelector('.done-board');
-    doneDrag={bar,vertical:bar.classList.contains('done-height-handle'),startX:event.clientX,startY:event.clientY,width:board?.offsetWidth??DONE_DEFAULT.width,height:board?.offsetHeight??DONE_DEFAULT.height,layout:bar.closest('.todo-layout'),board,pointer:event.pointerId};
-    bar.setPointerCapture?.(event.pointerId);bar.classList.add('dragging');document.body.classList.add(doneDrag.vertical?'row-resizing':'col-resizing');
+    const grip=event.target.closest?.('.done-resize');if(!grip||event.button!==0)return;
+    event.preventDefault();const board=document.querySelector('.done-board');if(!board)return;
+    doneDrag={grip,board,layout:grip.closest('.todo-layout'),startX:event.clientX,startY:event.clientY,width:board.offsetWidth,height:board.offsetHeight,pointer:event.pointerId};
+    grip.setPointerCapture?.(event.pointerId);grip.classList.add('dragging');document.body.classList.add('corner-resizing');
   });
   onDocument('pointermove',event=>{if(!doneDrag||event.pointerId!==doneDrag.pointer)return;
-    if(doneDrag.vertical)doneDrag.board.style.height=clampDoneHeight(doneDrag.height+(event.clientY-doneDrag.startY))+'px';
-    else doneDrag.layout.style.setProperty('--done-w',clampDoneWidth(doneDrag.width-(event.clientX-doneDrag.startX))+'px');});
-  const endDoneDrag=event=>{if(!doneDrag||event.pointerId!==doneDrag.pointer)return;const {bar,vertical,board}=doneDrag;doneDrag=null;
-    bar.classList.remove('dragging');document.body.classList.remove('col-resizing','row-resizing');
-    if(vertical)saveDoneBoardSize({height:board.offsetHeight});else{saveDoneBoardSize({width:board.offsetWidth});layoutTodoBoard();}};
+    doneDrag.layout.style.setProperty('--done-w',clampDoneWidth(doneDrag.width+(event.clientX-doneDrag.startX))+'px');
+    doneDrag.board.style.height=clampDoneHeight(doneDrag.height+(event.clientY-doneDrag.startY))+'px';});
+  const endDoneDrag=event=>{if(!doneDrag||event.pointerId!==doneDrag.pointer)return;const {grip,board}=doneDrag;doneDrag=null;
+    grip.classList.remove('dragging');document.body.classList.remove('corner-resizing');saveDoneBoardSize({width:board.offsetWidth,height:board.offsetHeight});layoutTodoBoard();};
   onDocument('pointerup',endDoneDrag);onDocument('pointercancel',endDoneDrag);
-  onDocument('dblclick',event=>{if(!event.target.closest?.('.done-splitter,.done-height-handle'))return;try{localStorage.removeItem(doneSizeKey());}catch{}applyDoneBoardSize();layoutTodoBoard();toast('완료 보드를 기본 크기로 되돌렸습니다.');});
-  onDocument('keydown',event=>{const handle=event.target.closest?.('.done-height-handle');if(handle&&['ArrowUp','ArrowDown'].includes(event.key)){event.preventDefault();const board=document.querySelector('.done-board'),height=clampDoneHeight(board.offsetHeight+(event.key==='ArrowDown'?20:-20));board.style.height=height+'px';saveDoneBoardSize({height});return;}
-    const bar=event.target.closest?.('.done-splitter');if(!bar||!['ArrowLeft','ArrowRight'].includes(event.key))return;event.preventDefault();
-    const width=clampDoneWidth((document.querySelector('.done-board')?.offsetWidth??DONE_DEFAULT.width)+(event.key==='ArrowLeft'?20:-20));bar.closest('.todo-layout').style.setProperty('--done-w',width+'px');saveDoneBoardSize({width});layoutTodoBoard();});
+  onDocument('dblclick',event=>{if(!event.target.closest?.('.done-resize'))return;try{localStorage.removeItem(doneSizeKey());}catch{}applyDoneBoardSize();layoutTodoBoard();toast('완료 보드를 기본 크기로 되돌렸습니다.');});
+  onDocument('keydown',event=>{if(!event.target.closest?.('.done-resize')||!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(event.key))return;event.preventDefault();
+    const board=document.querySelector('.done-board'),layout=document.querySelector('.todo-layout');if(!board||!layout)return;
+    if(event.key==='ArrowLeft'||event.key==='ArrowRight')layout.style.setProperty('--done-w',clampDoneWidth(board.offsetWidth+(event.key==='ArrowRight'?20:-20))+'px');
+    else board.style.height=clampDoneHeight(board.offsetHeight+(event.key==='ArrowDown'?20:-20))+'px';
+    saveDoneBoardSize({width:board.offsetWidth,height:board.offsetHeight});layoutTodoBoard();});
   function layoutTodoBoard(settle={}){
     const grid=document.querySelector('#todo-grid');if(!grid)return;
     if(!doneDrag)applyDoneBoardSize(); // 창 크기가 바뀌면 완료 보드 너비를 다시 맞춘다
@@ -289,7 +291,7 @@ export function createExtras(ctx) {
     if(state.view!=='todos')return;
     todo.items=result.todos;todo.today=result.today;todo.todayOpen=result.today_open;
     const pending=todo.items.filter(row=>!row.done),completed=todo.items.filter(row=>row.done);
-    const todoPanel=`<section class="todo-panel" aria-labelledby="todo-heading"><div class="todo-layout"><div class="todo-active"><div class="todo-head"><div><p class="eyebrow">STICKY NOTES</p><h2 id="todo-heading">오늘의 할 일 <small id="todo-today-count">오늘 ${todo.todayOpen}건</small></h2><p>노란 메모지에 바로 입력하세요. 빈 공간을 마우스 오른쪽 버튼으로 누르면 그 자리에 새 메모지가 만들어지고, 메모 위·아래 테두리를 끌면 원하는 위치로 옮길 수 있습니다.</p></div>${pending.length>1?'<button type="button" class="todo-arrange" data-action="todo-arrange" title="목표 날짜 순으로 왼쪽 위부터 줄 맞춰 놓습니다">메모 정렬</button>':''}</div><div class="todo-grid" id="todo-grid" tabindex="0" aria-label="진행 중인 메모. 빈 공간에서 오른쪽 클릭으로 새 메모 추가">${pending.map(todoCard).join('')}</div></div><div class="done-splitter" role="separator" tabindex="0" aria-orientation="vertical" aria-label="완료 보드 너비 조절(왼쪽·오른쪽 화살표, 두 번 누르면 기본 크기)" title="끌어서 완료 보드 너비 조절 · 두 번 누르면 기본 크기"></div><div class="done-wrap"><aside class="done-board" aria-label="완료 보드"><div class="done-board-head"><div><p class="eyebrow">FINISHED NOTES</p><h2>완료 보드 <small>${completed.length}건</small></h2></div><span aria-hidden="true">✓</span></div><p class="done-board-hint">완료한 메모를 누르면 크게 펼쳐집니다.</p><div class="done-board-notes">${completed.length?completed.map(doneNote).join(''):`<p class="done-board-empty">완료 체크한 메모가 여기에 붙습니다.</p>`}</div></aside><div class="done-height-handle" role="separator" tabindex="0" aria-orientation="horizontal" aria-label="완료 보드 높이 조절(위·아래 화살표, 두 번 누르면 기본 크기)" title="끌어서 완료 보드 높이 조절 · 두 번 누르면 기본 크기"></div></div></div></section>`;
+    const todoPanel=`<section class="todo-panel" aria-labelledby="todo-heading"><div class="todo-layout"><div class="todo-active"><div class="todo-head"><div><p class="eyebrow">STICKY NOTES</p><h2 id="todo-heading">오늘의 할 일 <small id="todo-today-count">오늘 ${todo.todayOpen}건</small></h2><p>노란 메모지에 바로 입력하세요. 빈 공간을 마우스 오른쪽 버튼으로 누르면 그 자리에 새 메모지가 만들어지고, 메모 위·아래 테두리를 끌면 원하는 위치로 옮길 수 있습니다.</p></div>${pending.length>1?'<button type="button" class="todo-arrange" data-action="todo-arrange" title="목표 날짜 순으로 왼쪽 위부터 줄 맞춰 놓습니다">메모 정렬</button>':''}</div><div class="todo-grid" id="todo-grid" tabindex="0" aria-label="진행 중인 메모. 빈 공간에서 오른쪽 클릭으로 새 메모 추가">${pending.map(todoCard).join('')}</div></div><div class="done-wrap"><aside class="done-board" aria-label="완료 보드"><div class="done-board-head"><div><p class="eyebrow">FINISHED NOTES</p><h2>완료 보드 <small>${completed.length}건</small></h2></div><span aria-hidden="true">✓</span></div><p class="done-board-hint">완료한 메모를 누르면 크게 펼쳐집니다.</p><div class="done-board-notes">${completed.length?completed.map(doneNote).join(''):`<p class="done-board-empty">완료 체크한 메모가 여기에 붙습니다.</p>`}</div></aside><div class="done-resize" role="button" tabindex="0" aria-label="완료 보드 크기 조절: 끌거나 화살표 키로 조절, 두 번 누르면 기본 크기" title="끌어서 크기 조절 · 두 번 누르면 기본 크기"></div></div></div></section>`;
     document.querySelector('#content').innerHTML=pageHead('PERSONAL NOTES','TO-DO List','할 일을 메모로 정리하고 완료 상태를 관리하세요.')+todoPanel;
     applyDoneBoardSize();
     layoutTodoBoard(options.settle);
