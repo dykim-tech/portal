@@ -1,9 +1,9 @@
-// 첫 화면 메모(2026-10-30 개편): 사용자마다 스티커 메모 최대 4장. 기본 1장을 두고, 메모 영역을 마우스 오른쪽 버튼으로
-// 누르면 1장씩 더 만든다. 글을 쓰면 자동 저장하며, 다른 창에서 먼저 저장했으면(버전 불일치) 덮어쓰지 않고 409와 최신 내용을 돌려준다.
+// 첫 화면 메모(2026-10-30 개편): 사용자마다 스티커 메모 2장을 항상 둔다(추가·삭제 없이 바로 쓰는 메모장 2개).
+// 예전에 4장까지 만들던 때의 빈 메모는 정리하고, 내용이 있는 메모는 지우지 않는다. 글을 쓰면 자동 저장하며, 다른 창에서 먼저 저장했으면(버전 불일치) 덮어쓰지 않고 409와 최신 내용을 돌려준다.
 // 예전 한 장짜리 메모(user_notes)는 처음 열 때 첫 메모로 옮긴다(원래 표는 그대로 둠).
 
 const fail = (status, message) => Object.assign(new Error(message), { status, expose: true });
-export const NOTE_MAX = 5000, NOTE_COUNT_MAX = 4;
+export const NOTE_MAX = 5000, NOTE_COUNT_MAX = 2;
 
 export function initializeNotes(db) {
   db.exec(`CREATE TABLE IF NOT EXISTS user_notes (
@@ -34,9 +34,15 @@ export function registerNotes(app, { db }) {
     return row;
   };
   const insert = (userId, body = '', updatedAt = null) => db.prepare('INSERT INTO dashboard_notes(user_id, body, created_at, updated_at) VALUES(?,?,?,?)').run(userId, body, new Date().toISOString(), updatedAt).lastInsertRowid;
-  // 메모가 하나도 없으면 기본 1장을 만든다(예전 메모가 있으면 그 내용으로).
+  // 메모를 항상 2장으로 맞춘다: 없으면 만들고(예전 한 장짜리 메모가 있으면 첫 장에), 2장을 넘는 빈 메모는 지운다.
   const ensure = userId => {
     let rows = list(userId);
+    if (rows.length > NOTE_COUNT_MAX) {
+      for (const row of [...rows].reverse()) {
+        if (rows.length <= NOTE_COUNT_MAX) break;
+        if (!row.body.trim()) { db.prepare('DELETE FROM dashboard_notes WHERE id=?').run(row.id); rows = rows.filter(r => r.id !== row.id); }
+      }
+    }
     if (!rows.length) {
       // 예전 메모는 한 번만 옮긴다(옮긴 뒤 모두 지우면 빈 메모로 시작).
       const migrated = db.prepare('SELECT 1 FROM dashboard_notes_migrated WHERE user_id=?').get(userId);
@@ -45,6 +51,7 @@ export function registerNotes(app, { db }) {
       db.prepare('INSERT OR IGNORE INTO dashboard_notes_migrated(user_id) VALUES(?)').run(userId);
       rows = list(userId);
     }
+    while (rows.length < NOTE_COUNT_MAX) { insert(userId); rows = list(userId); }
     return rows;
   };
   const text = body => {
@@ -53,12 +60,6 @@ export function registerNotes(app, { db }) {
   };
 
   app.get('/api/dashboard-notes', (req, res) => res.json({ notes: ensure(req.user.id), max: NOTE_COUNT_MAX }));
-  app.post('/api/dashboard-notes', (req, res) => {
-    const rows = ensure(req.user.id);
-    if (rows.length >= NOTE_COUNT_MAX) throw fail(409, `메모는 ${NOTE_COUNT_MAX}장까지 만들 수 있습니다.`);
-    const id = insert(req.user.id, text(req.body?.body ?? ''));
-    res.status(201).json({ note: own(id, req.user.id) });
-  });
   app.put('/api/dashboard-notes/:id', (req, res) => {
     const current = own(req.params.id, req.user.id), body = text(req.body?.body), version = Number(req.body?.version);
     if (!Number.isInteger(version) || version < 1) throw fail(400, '메모 버전을 확인해 주세요.');
@@ -66,9 +67,10 @@ export function registerNotes(app, { db }) {
     db.prepare('UPDATE dashboard_notes SET body=?, version=version+1, updated_at=? WHERE id=?').run(body, new Date().toISOString(), current.id);
     res.json({ note: own(current.id, req.user.id) });
   });
+  // 예전에 만든 3·4번째 메모(내용이 있어 자동으로 지우지 않은 것)만 화면에서 지울 수 있다.
   app.delete('/api/dashboard-notes/:id', (req, res) => {
     const current = own(req.params.id, req.user.id);
     db.prepare('DELETE FROM dashboard_notes WHERE id=?').run(current.id);
-    res.json({ notes: ensure(req.user.id) }); // 마지막 1장을 지우면 빈 메모 1장이 다시 생긴다
+    res.json({ notes: ensure(req.user.id) }); // 2장보다 적어지면 빈 메모로 다시 채운다
   });
 }

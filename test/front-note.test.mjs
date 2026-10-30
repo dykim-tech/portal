@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { createPortal } from '../server/app.mjs';
 import { removeStalePartials, STALE_PARTIAL_MS } from '../server/backups.mjs';
 
-test('dashboard memo notes: up to 4 per user, autosave with version check, migration from the single note', async () => {
+test('dashboard memo notes: always two per user, autosave with version check, migration and tidy-up', async () => {
   const origin = 'http://localhost:3100', dataDir = mkdtempSync(join(tmpdir(), 'portal-note-'));
   const portal = createPortal({ dataDir, backupDir: join(dataDir, 'backups'), origin, selfCheck: false, draftMailPollMs: 0, nasMeasureCheckMs: 0, holidayFetch: null });
   const server = portal.app.listen(0, '127.0.0.1'); await new Promise(r => server.once('listening', r));
@@ -22,33 +22,39 @@ test('dashboard memo notes: up to 4 per user, autosave with version check, migra
     const viewer = (await call('/auth/login', 'POST', { username: 'viewer', password: 'test-password-1234' })).cookie;
 
     assert.equal((await call('/dashboard-notes')).status, 401);
-    // 예전 한 장짜리 메모는 첫 메모로 옮겨진다
+    // 예전 한 장짜리 메모는 첫 메모로 옮겨지고, 메모장은 항상 2장이다
     const adminId = portal.db.prepare("SELECT id FROM users WHERE username='admin'").get().id;
     portal.db.prepare("INSERT INTO user_notes(user_id, body, version, updated_at) VALUES(?, '예전 메모', 3, '2026-10-29T00:00:00.000Z')").run(adminId);
     const first = (await call('/dashboard-notes', 'GET', undefined, admin)).data;
-    assert.equal(first.max, 4); assert.equal(first.notes.length, 1); assert.equal(first.notes[0].body, '예전 메모');
-    const id1 = first.notes[0].id;
+    assert.equal(first.max, 2); assert.deepEqual(first.notes.map(n => n.body), ['예전 메모', '']);
+    const [id1, id2] = first.notes.map(n => n.id);
     const saved = (await call('/dashboard-notes/' + id1, 'PUT', { body: '오늘 할 일\n- 견적 회신', version: 1 }, admin)).data.note;
     assert.equal(saved.body, '오늘 할 일\n- 견적 회신'); assert.equal(saved.version, 2); assert.ok(saved.updated_at);
+    assert.equal((await call('/dashboard-notes/' + id2, 'PUT', { body: '둘째', version: 1 }, admin)).data.note.body, '둘째');
     // 다른 창의 옛 버전으로 저장하면 덮어쓰지 않는다
     const stale = await call('/dashboard-notes/' + id1, 'PUT', { body: '옛 내용', version: 1 }, admin);
     assert.equal(stale.status, 409); assert.equal(stale.data.note.body, '오늘 할 일\n- 견적 회신');
-    // 최대 4장
-    for (let i = 0; i < 3; i++) assert.equal((await call('/dashboard-notes', 'POST', {}, admin)).status, 201);
-    assert.equal((await call('/dashboard-notes', 'POST', {}, admin)).status, 409);
-    const four = (await call('/dashboard-notes', 'GET', undefined, admin)).data.notes;
-    assert.equal(four.length, 4);
-    // 조회자도 자기 메모를 쓰고, 사용자끼리 섞이지 않는다
+    // 추가 기능은 없다
+    assert.equal((await call('/dashboard-notes', 'POST', {}, admin)).status, 404);
+    // 예전에 4장까지 만들었던 경우: 빈 메모는 정리하고 내용이 있는 메모는 남긴다
+    const now = new Date().toISOString();
+    portal.db.prepare("INSERT INTO dashboard_notes(user_id, body, created_at) VALUES(?, '', ?)").run(adminId, now);
+    const kept = portal.db.prepare("INSERT INTO dashboard_notes(user_id, body, created_at) VALUES(?, '남길 내용', ?)").run(adminId, now).lastInsertRowid;
+    portal.db.prepare("INSERT INTO dashboard_notes(user_id, body, created_at) VALUES(?, '  ', ?)").run(adminId, now);
+    const tidy = (await call('/dashboard-notes', 'GET', undefined, admin)).data.notes;
+    assert.deepEqual(tidy.map(n => n.body), ['오늘 할 일\n- 견적 회신', '둘째', '남길 내용']);
+    // 남은 3번째 메모를 지우면 2장이 된다
+    assert.equal((await call('/dashboard-notes/' + kept, 'DELETE', undefined, admin)).data.notes.length, 2);
+    // 조회자도 자기 메모장 2장을 쓰고, 사용자끼리 섞이지 않는다
     const vnotes = (await call('/dashboard-notes', 'GET', undefined, viewer)).data.notes;
-    assert.equal(vnotes.length, 1); assert.equal(vnotes[0].body, '');
+    assert.deepEqual(vnotes.map(n => n.body), ['', '']);
     assert.equal((await call('/dashboard-notes/' + id1, 'PUT', { body: 'x', version: 2 }, viewer)).status, 404);
     assert.equal((await call('/dashboard-notes/' + id1, 'DELETE', undefined, viewer)).status, 404);
     assert.equal((await call('/dashboard-notes/' + id1, 'PUT', { body: 'x'.repeat(5001), version: 2 }, admin)).status, 400);
     assert.equal((await call('/dashboard-notes/' + id1, 'PUT', { body: 1, version: 2 }, admin)).status, 400);
-    // 삭제: 모두 지우면 빈 메모 1장이 다시 생긴다
-    for (const note of four.slice(1)) await call('/dashboard-notes/' + note.id, 'DELETE', undefined, admin);
-    const last = (await call('/dashboard-notes/' + id1, 'DELETE', undefined, admin)).data.notes;
-    assert.equal(last.length, 1); assert.equal(last[0].body, ''); assert.notEqual(last[0].id, id1);
+    // 2장 중 하나를 지워도 빈 메모로 다시 2장이 된다
+    const after = (await call('/dashboard-notes/' + id2, 'DELETE', undefined, admin)).data.notes;
+    assert.equal(after.length, 2); assert.equal(after[1].body, '');
   } finally { await new Promise(r => server.close(r)); portal.db.close(); rmSync(dataDir, { recursive: true, force: true }); }
 });
 

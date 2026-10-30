@@ -70,7 +70,7 @@ export function portalHeroHtml({ user, d, names, shown, chips = [] }) {
         <form class="ph-search" id="portal-search" role="search"><input name="q" maxlength="100" placeholder="포털 전체(기록 내용·자료·첨부 파일 이름)에서 찾아보세요" aria-label="포털 통합 검색"><button type="submit">검색 ${portalIcon('search', 20)}</button></form>
         <p class="ph-search-msg" id="portal-search-msg" role="status" aria-live="polite" hidden></p>
         ${chipHtml ? `<div class="ph-chips"><span>자주 쓰는 메뉴</span>${chipHtml}</div>` : ''}
-        <section class="ph-memos" id="portal-notes" aria-label="메모 (빈 곳을 마우스 오른쪽 버튼으로 누르면 추가, 최대 4장)"></section></div>
+        <section class="ph-memos" id="portal-notes" aria-label="메모장"></section></div>
       <aside class="ph-calendar" id="portal-calendar" aria-label="달력"><p class="muted">달력을 불러오는 중입니다.</p></aside>
     </div></section>
     <section class="ph-results" id="portal-search-results" hidden></section>
@@ -119,16 +119,17 @@ export function portalCalendarHtml({ year, month, holidays = [], events = [], to
     <p class="ph-cal-source">${error ? `<span class="ph-cal-error">${esc(error)}</span> ` : ''}${source ? `공휴일 출처: ${esc(source)}${updated ? ` (${esc(updated)} 받음)` : ''}` : ''}</p>`;
 }
 
-// 첫 화면 메모(2026-10-30 개편): 검색창 아래에 스티커 메모를 최대 4장 가로로 붙인다. 기본 1장, 빈 곳을 오른쪽 클릭하면 1장씩 추가.
+// 첫 화면 메모(2026-10-30 개편): 검색창 아래에 스티커 메모장 2개를 바로 붙여 둔다(추가 없이 바로 입력).
 // 평소에는 보드에 핀으로 꽂힌 것처럼 살짝 기울어져 있고, 마우스를 올리거나 글을 쓰는 동안에는 반듯하게 떠오른다.
-export function portalNotesHtml({ notes, max = 4, limit = 5000 }) {
-  const cards = notes.map((note, index) => `<article class="ph-memo ph-memo-${index % 4}" data-note-id="${Number(note.id)}">
+// 예전에 만든 3·4번째 메모에 내용이 남아 있으면 함께 보여 주고 × 버튼으로 지울 수 있게 한다.
+export function portalNotesHtml({ notes, max = 2, limit = 5000 }) {
+  // 메모장은 2장만 보인다. 3·4번째는 내용이 남아 있을 때만(지울 수 있게) 보여 준다.
+  const cards = notes.filter((note, index) => index < max || note.body.trim()).map((note, index) => `<article class="ph-memo ph-memo-${index % 4}" data-note-id="${Number(note.id)}">
       <span class="ph-memo-pin" aria-hidden="true"></span>
       <textarea class="ph-memo-body" data-note-body="${Number(note.id)}" maxlength="${limit}" spellcheck="false" placeholder="간단히 메모하세요.&#10;쓰는 대로 자동 저장됩니다." aria-label="메모 ${index + 1}">${esc(note.body)}</textarea>
-      <div class="ph-memo-foot"><span class="ph-memo-status" data-note-status="${Number(note.id)}" role="status" aria-live="polite">${note.updated_at ? '저장됨 · ' + esc(noteTime(note.updated_at)) : '자동 저장'}</span>${notes.length > 1 ? `<button type="button" class="ph-memo-delete" data-action="portal-note-delete" data-id="${Number(note.id)}" title="이 메모 삭제" aria-label="메모 ${index + 1} 삭제">×</button>` : ''}</div>
+      <div class="ph-memo-foot"><span class="ph-memo-status" data-note-status="${Number(note.id)}" role="status" aria-live="polite">${note.updated_at ? '저장됨 · ' + esc(noteTime(note.updated_at)) : '자동 저장'}</span>${index >= max ? `<button type="button" class="ph-memo-delete" data-action="portal-note-delete" data-id="${Number(note.id)}" title="예전에 만든 메모 삭제" aria-label="메모 ${index + 1} 삭제">×</button>` : ''}</div>
     </article>`).join('');
-  const add = notes.length < max ? `<button type="button" class="ph-memo-add" data-action="portal-note-add" title="마우스 오른쪽 버튼으로 눌러도 추가됩니다">+ 메모 추가<small>오른쪽 클릭 · ${notes.length}/${max}</small></button>` : '';
-  return `<div class="ph-memo-grid">${cards}${add}</div>`;
+  return `<div class="ph-memo-grid">${cards}</div>`;
 }
 export function noteTime(iso) { return new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(iso)); }
 

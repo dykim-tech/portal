@@ -57,13 +57,13 @@ function quickMenuCandidates(){const names=new Map(sidebarMenus);return sidebarM
 function quickMenuChips(){const chosen=new Set(Array.isArray(state.user.quick_menus)?state.user.quick_menus:[]),shown=new Set(shownMenuOrder());return quickMenuCandidates().filter(([id,,,parent])=>chosen.has(id)&&shown.has(parent)).map(([id,label,external])=>[id,label,external]);}
 async function saveQuickMenus(ids){const saved=await api('/menu-settings/quick',{method:'PUT',body:{ids}});state.user.quick_menus=[...saved.ids];toast(`첫 화면 자주 쓰는 메뉴 ${saved.ids.length}개를 저장했습니다. 모든 사용자에게 적용됩니다.`);}
 function renderQuickMenuSettings(){const box=document.querySelector('#settings-quick-menus');if(!box)return;const chosen=new Set(state.user.quick_menus??[]),shown=new Set(shownMenuOrder());box.innerHTML=`<p class="help-line">체크한 메뉴가 포털형 첫 화면 검색창 아래 '자주 쓰는 메뉴'에 표시됩니다(표시 순서는 각자의 메뉴 순서를 따름). 숨긴 메뉴는 체크해도 표시되지 않습니다.</p><div class="quick-menu-options">${quickMenuCandidates().map(([id,label,external,parent])=>`<label class="quick-menu-option ${shown.has(parent)?'':'menu-off'}"><input type="checkbox" data-quick-menu="${esc(id)}" ${chosen.has(id)?'checked':''}> ${esc(label)}${external?' <small>↗</small>':''}${shown.has(parent)?'':' <small>(숨긴 메뉴)</small>'}</label>`).join('')}</div>`;}
-// 첫 화면 메모(최대 4장): 메모마다 입력을 멈추고 0.8초 뒤(또는 칸을 벗어날 때) 자동 저장. 다른 창에서 먼저 바뀌면 최신 내용을 다시 불러온다.
+// 첫 화면 메모장 2개: 메모마다 입력을 멈추고 0.8초 뒤(또는 칸을 벗어날 때) 자동 저장. 다른 창에서 먼저 바뀌면 최신 내용을 다시 불러온다.
 // 화면을 옮겨 메모 칸이 없어져도 마지막 입력(pending)은 저장한다.
-const portalNotes={max:4,items:new Map()}; // id → {version,saved,pending,timer,saving}
+const portalNotes={max:2,items:new Map()}; // id → {version,saved,pending,timer,saving}
 const noteState=id=>{let st=portalNotes.items.get(id);if(!st){st={version:0,saved:'',pending:null,timer:null,saving:null};portalNotes.items.set(id,st);}return st;};
 async function flushPortalNotes(){await Promise.all([...portalNotes.items.keys()].map(id=>savePortalNote(id)));}
 async function renderPortalNotes(focusId){const box=document.querySelector('#portal-notes');if(!box)return;
-  try{await flushPortalNotes();const data=await api('/dashboard-notes');portalNotes.max=data.max??4;const keep=new Set(data.notes.map(n=>n.id));
+  try{await flushPortalNotes();const data=await api('/dashboard-notes');portalNotes.max=data.max??2;const keep=new Set(data.notes.map(n=>n.id));
     for(const id of [...portalNotes.items.keys()])if(!keep.has(id))portalNotes.items.delete(id);
     for(const n of data.notes){const st=noteState(n.id);st.version=n.version;st.saved=n.body;st.pending=null;}
     const target=document.querySelector('#portal-notes');if(target)target.innerHTML=portalNotesHtml({notes:data.notes,max:portalNotes.max});
@@ -78,12 +78,8 @@ async function savePortalNote(id){const st=noteState(id);clearTimeout(st.timer);
     try{const {note}=await api('/dashboard-notes/'+id,{method:'PUT',body:{body,version:st.version}});st.version=note.version;st.saved=note.body;if(st.pending===note.body)st.pending=null;const s=status();if(s)s.textContent='저장됨 · '+noteTime(note.updated_at);}
     catch(error){if(/다른 창/.test(error.message)){st.pending=null;await renderPortalNotes();const s=status();if(s)s.textContent=error.message;}else{const s=status();if(s)s.textContent='저장하지 못했습니다: '+error.message;}}})();
   await st.saving;st.saving=null;}
-async function addPortalNote(){const count=document.querySelectorAll('#portal-notes .ph-memo').length;if(count>=portalNotes.max){toast(`메모는 ${portalNotes.max}장까지 만들 수 있습니다.`);return;}
-  const {note}=await api('/dashboard-notes',{method:'POST',body:{}});await renderPortalNotes(note.id);}
 document.addEventListener('input',event=>{if(event.target.matches?.('[data-note-body]'))notePortalInput(event.target);});
 document.addEventListener('focusout',event=>{if(event.target.matches?.('[data-note-body]'))savePortalNote(Number(event.target.dataset.noteBody));});
-// 메모 영역의 빈 곳(메모 글 칸 밖)을 오른쪽 클릭하면 메모를 1장 더 만든다.
-document.addEventListener('contextmenu',event=>{const area=event.target.closest?.('#portal-notes');if(!area||event.target.closest('textarea'))return;event.preventDefault();addPortalNote().catch(error=>toast(error.message));});
 // 첫 화면 달력: 공휴일은 서버가 Google 공개 캘린더에서 받아 둔 목록(/api/holidays)을 쓴다.
 const portalCal={year:0,month:0,data:null,loadedAt:0,selected:'',events:[],todos:[],eventsKey:'',eventsError:''};
 // step: -1·1 이전·다음 달, 0 이번 달·오늘, undefined 그대로. date를 주면 그 날짜의 달로 옮겨 고른다(검색 결과에서 일정 열기).
@@ -830,7 +826,6 @@ document.addEventListener('click',async event=>{
     const action=button.dataset.action,id=button.dataset.id;if(!action)return;
     if(action==='app-reload'){location.reload();return;}
     if(action==='portal-new-draft'){await navigateTo('drafts');await drafts.action('draft-new');return;}
-    if(action==='portal-note-add'){await addPortalNote();return;}
     if(action==='portal-note-delete'){const area=document.querySelector(`[data-note-body="${Number(id)}"]`);if(area?.value.trim()&&!confirm('이 메모를 삭제할까요? 적은 내용도 함께 지워집니다.'))return;const st=noteState(Number(id));clearTimeout(st.timer);st.pending=null;if(area)st.saved=area.value;await api('/dashboard-notes/'+Number(id),{method:'DELETE'});portalNotes.items.delete(Number(id));await renderPortalNotes();toast('메모를 삭제했습니다.');return;}
     if(action==='portal-cal'){await renderPortalCalendar(Number(button.dataset.step));return;}
     if(action==='portal-cal-day'){portalCal.selected=button.dataset.date;await renderPortalCalendar();document.querySelector('#portal-event-form input[name=title]')?.focus({preventScroll:true});return;}
