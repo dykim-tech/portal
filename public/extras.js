@@ -188,8 +188,9 @@ export function createExtras(ctx) {
     memo?.focus();
   }
   async function todoContextMenu(event){
-    if(state.view!=='todos'||modal.open||!event.target.closest?.('.workspace'))return false;
-    if(event.target.closest('.topbar,.horizontal-nav,.page-head,.todo-head,.todo-note,.done-board,button,input,textarea,a'))return false;
+    // 본문(#content) 안에서만 새 메모를 만든다. 예전에는 기존 메뉴형 화면의 .workspace만 확인해 포털형 화면에서는 동작하지 않았다(2026-10-30).
+    if(state.view!=='todos'||modal.open||!event.target.closest?.('#content'))return false;
+    if(event.target.closest('.topbar,.horizontal-nav,.ph-header,.ph-nav,.ph-crumbs,.page-head,.todo-head,.todo-note,.done-board,button,input,textarea,a'))return false;
     event.preventDefault();
     // 메모 보드 안을 오른쪽 클릭하면 그 자리에 새 메모를 만든다.
     const grid=document.querySelector('#todo-grid.free'),box=grid?.getBoundingClientRect();

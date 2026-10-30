@@ -47,9 +47,27 @@ function makeStandalone(path) {
 
 // 예전 방식 백업 옆에 남은 보조 파일(-wal/-shm, .partial-wal/-shm)을 정리한다.
 // 내용이 남은 -wal 파일이 붙은 백업은 건드리지 않는다.
-export function cleanBackupFiles(backupDir) {
+// 백업 도중 포털이 다시 시작되면(절전·재시작) 만들던 .partial 파일이 남는다(2026-10-27에 0.7GB가 남아 있었음).
+// 마지막으로 쓴 지 STALE_PARTIAL_MS가 지난 .partial과 그 보조 파일은 끝나지 못한 백업이므로 지운다.
+export const STALE_PARTIAL_MS = 6 * 60 * 60 * 1000; // 12GB 백업도 35분 안팎이므로 6시간이면 충분히 끝난 뒤다.
+export function removeStalePartials(backupDir, now = Date.now()) {
+  if (!existsSync(backupDir)) return 0;
+  let removed = 0;
+  for (const name of readdirSync(backupDir)) {
+    if (!/^portal-[A-Za-z0-9-]+\.sqlite\.partial$/.test(name)) continue;
+    const path = join(backupDir, name);
+    try {
+      if (now - statSync(path).mtimeMs < STALE_PARTIAL_MS) continue;
+      rmSync(path, { force: true }); removed++;
+      for (const suffix of SIDECARS) if (existsSync(path + suffix)) { rmSync(path + suffix, { force: true }); removed++; }
+    } catch (error) { console.warn(`Stale partial backup cleanup failed: ${name}`, error); }
+  }
+  return removed;
+}
+
+export function cleanBackupFiles(backupDir, now = Date.now()) {
   if (!existsSync(backupDir)) return { removed: 0, converted: 0 };
-  let removed = 0, converted = 0;
+  let removed = removeStalePartials(backupDir, now), converted = 0;
   const names = new Set(readdirSync(backupDir));
   const mains = new Set();
   for (const name of names) {
@@ -259,7 +277,7 @@ export function registerBackups(app, { db, backupDir, requireRole, maintenance, 
   const admin = requireRole(['admin']);
   let busy = false;
   const downloading = new Set();
-  const prune = () => { if (!busy && !maintenance.restoring) pruneExpiredBackups(backupDir, Date.now(), downloading); };
+  const prune = () => { if (!busy && !maintenance.restoring) { pruneExpiredBackups(backupDir, Date.now(), downloading); removeStalePartials(backupDir); } };
   app.get('/api/backups', admin, (_req, res) => { prune(); res.json({ backups: listBackups(backupDir) }); });
   app.post('/api/backups', admin, async (_req, res) => {
     if (busy) throw fail(409, '백업 작업이 진행 중입니다.');

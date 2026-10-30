@@ -1,6 +1,6 @@
 // 통합 검색(2026-10-28, 포털형 첫 화면 검색창): 포털에 저장된 모든 기록의 제목·내용·첨부 파일 이름을 한 번에 찾는다.
 // 검색어를 띄어쓰기로 나누어 모든 낱말이 들어 있는 항목만 고른다(대소문자 무시, LIKE). 첨부 파일 '내용'은 찾지 않는다.
-// TO-DO는 로그인한 사용자 본인 것만, 잠긴 메모는 제외한다. 분류마다 최대 limit건과 전체 건수를 돌려준다.
+// TO-DO·달력 일정은 로그인한 사용자 본인 것만, 잠긴 메모는 제외한다. 분류마다 최대 limit건과 전체 건수를 돌려준다.
 
 const fail = (status, message) => Object.assign(new Error(message), { status, expose: true });
 const like = term => '%' + term.replace(/[\\%_]/g, c => '\\' + c) + '%';
@@ -24,6 +24,8 @@ const sources = [
     "it.id, it.name AS title, it.description AS body, it.asset_code || CASE WHEN it.location<>'' THEN ' · ' || it.location ELSE '' END AS sub", 'it.updated_at DESC'],
   ['todos', 'TO-DO', 'todos', 'todos td', ['td.title', 'td.body'],
     "td.id, td.title, td.body, td.target_date || CASE WHEN td.done=1 THEN ' · 완료' ELSE '' END AS sub", 'td.target_date DESC, td.id DESC', 'td.user_id', 'td.lock_hash IS NULL'],
+  ['events', '달력 일정', 'dashboard', 'calendar_events ev', ['ev.title'],
+    "ev.id, ev.title, '' AS body, ev.event_date || CASE WHEN ev.event_time<>'' THEN ' ' || ev.event_time ELSE '' END AS sub, ev.event_date AS date", 'ev.event_date DESC, ev.event_time DESC', 'ev.user_id'],
   ['folders', '자료 폴더', 'library', 'folders f', ['f.name'],
     "f.id, f.name AS title, '' AS body, coalesce((SELECT name FROM folders p WHERE p.id=f.parent_id),'최상위') AS sub, f.id AS folder_id", 'f.name'],
   ['manuals', '자료 파일', 'library', 'manuals mf', ['mf.name'],

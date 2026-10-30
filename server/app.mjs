@@ -21,6 +21,8 @@ import { registerLeave } from './leave.mjs';
 import { registerNas } from './nas.mjs';
 import { registerSearch } from './search.mjs';
 import { registerHolidays } from './holidays.mjs';
+import { registerNotes } from './notes.mjs';
+import { registerCalendar } from './calendar.mjs';
 import { createMenuSettings } from './menus.mjs';
 import { createSelfCheck } from './self-check.mjs';
 import { registerUsage } from './usage.mjs';
@@ -344,6 +346,8 @@ export function createPortal(options = {}) {
   registerLeave(app, { db, requireRole });
   registerNas(app, { db, requireRole, dataDir, fetchImpl: options.nasFetch, sshRunner: options.nasSshRunner, sshPlatform: options.nasSshPlatform, measureCheckMs: options.nasMeasureCheckMs });
   registerSearch(app, { db });
+  registerNotes(app, { db });
+  registerCalendar(app, { db });
   registerHolidays(app, { db, fetchImpl: 'holidayFetch' in options ? options.holidayFetch : globalThis.fetch });
   purgeOrphanChunks(db);
   registerReports(app, { db });

@@ -70,6 +70,7 @@ export function portalHeroHtml({ user, d, names, shown, chips = [] }) {
         <p class="ph-search-msg" id="portal-search-msg" role="status" aria-live="polite" hidden></p>
         ${chipHtml ? `<div class="ph-chips"><span>자주 쓰는 메뉴</span>${chipHtml}</div>` : ''}</div>
       <aside class="ph-calendar" id="portal-calendar" aria-label="달력"><p class="muted">달력을 불러오는 중입니다.</p></aside>
+      <aside class="ph-note" id="portal-note" aria-label="메모"><p class="muted">메모를 불러오는 중입니다.</p></aside>
     </div></section>
     <section class="ph-results" id="portal-search-results" hidden></section>
     ${tileHtml ? `<section class="ph-section"><div class="ph-section-head"><h2>자주 찾는 메뉴</h2><p>메뉴를 누르면 해당 화면으로 이동합니다.</p></div><div class="ph-tiles">${tileHtml}</div></section>` : ''}
@@ -78,36 +79,62 @@ export function portalHeroHtml({ user, d, names, shown, chips = [] }) {
 
 // 달력(공휴일 포함): month는 0~11. holidays: [{date:'YYYY-MM-DD', name}] — 서버(/api/holidays)가 받은 출처 그대로.
 export function seoulToday() { return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Seoul', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date()); }
-export function portalCalendarHtml({ year, month, holidays = [], source = '', fetchedAt = null, error = '', loading = false }) {
+// 달력(공휴일 + 내 일정): month는 0~11. holidays: [{date,name}] — 서버(/api/holidays)가 받은 출처 그대로.
+// events: 내 일정 [{id,date,time,title}], selected: 고른 날짜(YYYY-MM-DD). 날짜를 누르면 아래에 그날 일정과 입력 칸이 나온다.
+const weekdayNames = ['일', '월', '화', '수', '목', '금', '토'];
+export function portalCalendarHtml({ year, month, holidays = [], events = [], todos = [], selected = '', source = '', fetchedAt = null, error = '', loading = false, eventsError = '' }) {
   const pad = n => String(n).padStart(2, '0'), today = seoulToday();
   const first = new Date(Date.UTC(year, month, 1)).getUTCDay(), days = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
   const prefix = `${year}-${pad(month + 1)}-`, monthHolidays = holidays.filter(h => h.date.startsWith(prefix));
-  const byDate = new Map(); for (const h of monthHolidays) byDate.set(h.date, [...(byDate.get(h.date) ?? []), h.name]);
+  const byDate = new Map(); for (const h of holidays) byDate.set(h.date, [...(byDate.get(h.date) ?? []), h.name]);
+  const eventsBy = new Map(); for (const e of events) eventsBy.set(e.date, [...(eventsBy.get(e.date) ?? []), e]);
+  const todosBy = new Map(); for (const t of todos) todosBy.set(t.date, [...(todosBy.get(t.date) ?? []), t]);
+  const todoLabel = t => t.locked ? '잠긴 메모' : t.text;
   const cells = [];
   for (let i = 0; i < first; i++) cells.push('<span class="ph-cal-day ph-cal-blank" aria-hidden="true"></span>');
   for (let day = 1; day <= days; day++) {
-    const date = prefix + pad(day), weekday = (first + day - 1) % 7, names = byDate.get(date);
-    const cls = ['ph-cal-day', weekday === 0 ? 'sun' : weekday === 6 ? 'sat' : '', names ? 'holiday' : '', date === today ? 'today' : ''].filter(Boolean).join(' ');
-    const label = `${month + 1}월 ${day}일${names ? ' ' + names.join(', ') : ''}${date === today ? ' (오늘)' : ''}`;
-    cells.push(`<span class="${cls}" title="${esc(label)}" aria-label="${esc(label)}">${day}</span>`);
+    const date = prefix + pad(day), weekday = (first + day - 1) % 7, names = byDate.get(date), dayEvents = eventsBy.get(date) ?? [], dayTodos = todosBy.get(date) ?? [], openTodos = dayTodos.filter(t => !t.done).length;
+    const cls = ['ph-cal-day', weekday === 0 ? 'sun' : weekday === 6 ? 'sat' : '', names ? 'holiday' : '', date === today ? 'today' : '', date === selected ? 'selected' : '', dayEvents.length || dayTodos.length ? 'has-events' : ''].filter(Boolean).join(' ');
+    const label = `${month + 1}월 ${day}일${names ? ' ' + names.join(', ') : ''}${dayEvents.length ? ` 일정 ${dayEvents.length}건` : ''}${dayTodos.length ? ` 할 일 ${dayTodos.length}건${openTodos < dayTodos.length ? `(완료 ${dayTodos.length - openTodos})` : ''}` : ''}${date === today ? ' (오늘)' : ''}`;
+    const tip = [label, ...dayEvents.map(e => `${e.time ? e.time + ' ' : ''}${e.title}`), ...dayTodos.map(t => `${t.done ? '☑' : '☐'} ${todoLabel(t)}`)].join('\n');
+    cells.push(`<button type="button" class="${cls}" data-action="portal-cal-day" data-date="${date}" title="${esc(tip)}" aria-label="${esc(label)}" aria-pressed="${date === selected}">${day}${dayEvents.length || dayTodos.length ? `<span class="ph-cal-dots" aria-hidden="true">${dayEvents.length ? '<i class="ph-cal-dot"></i>' : ''}${dayTodos.length ? `<i class="ph-cal-dot todo${openTodos ? '' : ' done'}"></i>` : ''}</span>` : ''}</button>`);
   }
   const list = monthHolidays.map(h => `<li><b>${Number(h.date.slice(8))}일</b> ${esc(h.name)}</li>`).join('');
   const updated = fetchedAt ? new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(fetchedAt)) : '';
-  return `<div class="ph-cal-head"><button type="button" class="ph-cal-nav" data-action="portal-cal" data-step="-1" aria-label="이전 달">‹</button><h2><button type="button" class="ph-cal-title" data-action="portal-cal" data-step="0" title="이번 달로">${year}년 ${month + 1}월</button></h2><button type="button" class="ph-cal-nav" data-action="portal-cal" data-step="1" aria-label="다음 달">›</button></div>
-    <div class="ph-cal-grid" role="grid"><span class="ph-cal-wd sun">일</span><span class="ph-cal-wd">월</span><span class="ph-cal-wd">화</span><span class="ph-cal-wd">수</span><span class="ph-cal-wd">목</span><span class="ph-cal-wd">금</span><span class="ph-cal-wd sat">토</span>${cells.join('')}</div>
+  let agenda = '';
+  if (selected) {
+    const [, m, d] = selected.split('-').map(Number), wd = weekdayNames[new Date(selected + 'T00:00:00Z').getUTCDay()];
+    const rows = (eventsBy.get(selected) ?? []).map(e => `<li><span class="ph-ev-time">${e.time ? esc(e.time) : '종일'}</span><span class="ph-ev-title">${esc(e.title)}</span><button type="button" class="ph-ev-delete" data-action="portal-event-delete" data-id="${Number(e.id)}" aria-label="일정 삭제: ${esc(e.title)}" title="삭제">×</button></li>`).join('');
+    const todoRows = (todosBy.get(selected) ?? []).map(t => `<li class="ph-todo-row${t.done ? ' done' : ''}"><span class="ph-ev-time">${t.done ? '완료' : '할 일'}</span><button type="button" class="ph-todo-link" data-view="todos" title="TO-DO List에서 열기">${t.locked ? '🔒 잠긴 메모' : esc(t.text)}</button><span aria-hidden="true"></span></li>`).join('');
+    const holidayNames = byDate.get(selected);
+    agenda = `<section class="ph-agenda" aria-label="${m}월 ${d}일 일정"><h3>${m}월 ${d}일 (${wd})${selected === today ? ' <small>오늘</small>' : ''}${holidayNames ? ` <em>${esc(holidayNames.join(', '))}</em>` : ''}</h3>
+      ${eventsError ? `<p class="ph-cal-error">${esc(eventsError)}</p>` : rows || todoRows ? `<ul class="ph-ev-list">${rows}${todoRows}</ul>` : '<p class="muted ph-ev-empty">적힌 일정·할 일이 없습니다.</p>'}
+      <form class="ph-ev-form" id="portal-event-form"><input type="hidden" name="date" value="${selected}"><input type="time" name="time" aria-label="시각(선택)" title="시각(비워 두면 종일)"><input name="title" maxlength="100" required placeholder="일정 입력 후 Enter" aria-label="일정 내용"><button type="submit">추가</button></form></section>`;
+  }
+  return `<div class="ph-cal-head"><button type="button" class="ph-cal-nav" data-action="portal-cal" data-step="-1" aria-label="이전 달">‹</button><h2><button type="button" class="ph-cal-title" data-action="portal-cal" data-step="0" title="이번 달·오늘로">${year}년 ${month + 1}월</button></h2><button type="button" class="ph-cal-nav" data-action="portal-cal" data-step="1" aria-label="다음 달">›</button></div>
+    <div class="ph-cal-grid"><span class="ph-cal-wd sun">일</span><span class="ph-cal-wd">월</span><span class="ph-cal-wd">화</span><span class="ph-cal-wd">수</span><span class="ph-cal-wd">목</span><span class="ph-cal-wd">금</span><span class="ph-cal-wd sat">토</span>${cells.join('')}</div>
+    ${agenda}
     <div class="ph-cal-holidays">${loading ? '<p class="muted">공휴일을 불러오는 중입니다.</p>' : list ? `<ul>${list}</ul>` : '<p class="muted">이번 달 공휴일이 없습니다.</p>'}</div>
     <p class="ph-cal-source">${error ? `<span class="ph-cal-error">${esc(error)}</span> ` : ''}${source ? `공휴일 출처: ${esc(source)}${updated ? ` (${esc(updated)} 받음)` : ''}` : ''}</p>`;
 }
 
+// 메모 스티커(TO-DO List 스티커 메모 모양): 사용자마다 한 장, 글을 쓰면 자동 저장(app.js renderPortalNote).
+export function portalNoteHtml({ note, max = 5000 }) {
+  return `<div class="ph-note-top"><strong>메모</strong><span class="ph-note-count" id="portal-note-count">${note.body.length.toLocaleString('ko-KR')} / ${max.toLocaleString('ko-KR')}</span></div>
+    <textarea class="ph-note-body" id="portal-note-body" maxlength="${max}" spellcheck="false" placeholder="여기에 간단히 메모하세요. 쓰는 대로 자동 저장됩니다." aria-label="메모 내용">${esc(note.body)}</textarea>
+    <div class="ph-note-bottom"><span class="ph-note-status" id="portal-note-status" role="status" aria-live="polite">${note.updated_at ? '저장됨 · ' + esc(noteTime(note.updated_at)) : '아직 저장한 메모가 없습니다'}</span><button type="button" data-view="todos">TO-DO List →</button></div>`;
+}
+export function noteTime(iso) { return new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(iso)); }
+
 // 통합 검색: 서버 /api/search가 포털 전체(기록 제목·내용, 자료 폴더·파일·링크 이름, 첨부 파일 이름)를 찾는다.
-const kindView = { drafts: 'drafts', meetings: 'meetings', work: 'work', customers: 'work', installations: 'installations', projects: 'projects', items: 'items', todos: 'todos', folders: 'library', manuals: 'library', links: 'library' };
+const kindView = { events: 'dashboard', drafts: 'drafts', meetings: 'meetings', work: 'work', customers: 'work', installations: 'installations', projects: 'projects', items: 'items', todos: 'todos', folders: 'library', manuals: 'library', links: 'library' };
 export async function portalSearch({ api, q }) {
   const data = await api('/search?' + new URLSearchParams({ q, limit: '8' }));
   const pattern = new RegExp(data.terms.map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'), 'gi');
   const mark = text => { const value = String(text ?? ''); let html = '', last = 0; for (const m of value.matchAll(pattern)) { if (!m[0]) continue; html += esc(value.slice(last, m.index)) + `<mark>${esc(m[0])}</mark>`; last = m.index + m[0].length; } return html + esc(value.slice(last)); };
   const open = (kind, row) => kind === 'links'
     ? `<a class="link-button" href="${esc(row.url)}" target="_blank" rel="noopener noreferrer">${mark(row.title)} <small>↗</small><span class="secondary-line">${mark(row.sub ?? '')}</span></a>`
-    : `<button type="button" class="link-button" data-action="search-open" data-kind="${esc(kind)}" data-id="${Number(row.id)}"${row.folder_id != null ? ` data-folder="${Number(row.folder_id)}"` : ''}${row.preview_type ? ' data-preview="1"' : ''}>${mark(row.title)}<span class="secondary-line">${esc(row.sub ?? '')}</span>${row.snippet ? `<span class="ph-snippet">${mark(row.snippet)}</span>` : ''}</button>`;
+    : `<button type="button" class="link-button" data-action="search-open" data-kind="${esc(kind)}" data-id="${Number(row.id)}"${row.folder_id != null ? ` data-folder="${Number(row.folder_id)}"` : ''}${row.preview_type ? ' data-preview="1"' : ''}${row.date ? ` data-date="${esc(row.date)}"` : ''}>${mark(row.title)}<span class="secondary-line">${esc(row.sub ?? '')}</span>${row.snippet ? `<span class="ph-snippet">${mark(row.snippet)}</span>` : ''}</button>`;
   const panel = group => {
     const rows = group.rows.map(row => `<div class="dashboard-row">${open(group.id === 'attachments' ? row.kind : group.id, group.id === 'attachments' ? { ...row, id: row.parent_id, sub: `${row.parent_title} 첨부`, snippet: '' } : row)}</div>`).join('');
     const more = group.view ? `<button class="small" data-view="${group.view}">목록 보기</button>` : '';
