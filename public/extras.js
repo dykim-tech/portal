@@ -15,21 +15,35 @@ export function createExtras(ctx) {
   function fitTodoBoard(){const grid=document.querySelector('#todo-grid');if(!grid?.classList.contains('free'))return;let bottom=0;for(const card of grid.querySelectorAll('.todo-note'))bottom=Math.max(bottom,card.offsetTop+card.offsetHeight);grid.style.height=Math.max(320,bottom+40)+'px';}
   // 메모끼리 겹치지 않게 정리(2026-10-30): 메모를 키우거나 옮기거나 새로 만들면 겹친 메모를 아래로 내린다.
   // first: 자리를 지킬 메모(방금 키우거나 옮긴 메모), last: 빈 자리를 찾아 내려갈 메모(방금 만든 메모). 바뀐 위치는 서버에 저장한다.
+  // 메모 자동 정렬(2026-10-30, 겹침 방지 다음 단계): 메모를 놓거나 키우거나 새로 만들 때마다 보드를 정돈한다.
+  // ① 가로 위치를 칸(TODO_COL=300px: 기본 메모 285px + 간격 15px) 경계에 맞추고(빈 칸은 없앰) ② 위에서부터 차례로(위·왼쪽 순)
+  // 빈 공간 없이 위로 끌어올린다. 그래서 메모 사이에 빈 줄이 남거나 서로 겹치지 않는다. 끌어 놓은 높이는 순서를 정하는 데 쓰인다.
+  // first: 같은 높이에서 먼저 둘 메모(방금 옮기거나 키운 메모), last: 같은 높이에서 나중에 둘 메모(방금 만든 메모). 바뀐 위치는 서버에 저장한다.
+  const TODO_COL=300;
   function settleTodoBoard({first=[],last=[]}={}){
     const grid=document.querySelector('#todo-grid.free');if(!grid)return;
     const cards=[...grid.querySelectorAll('.todo-note')];
     const rank=card=>first.includes(Number(card.dataset.todoId))?0:last.includes(Number(card.dataset.todoId))?2:1;
-    cards.sort((a,b)=>rank(a)-rank(b)||a.offsetTop-b.offsetTop||a.offsetLeft-b.offsetLeft);
+    cards.sort((a,b)=>a.offsetTop-b.offsetTop||rank(a)-rank(b)||a.offsetLeft-b.offsetLeft);
     const placed=[],moved=[];
+    const hits=(x,y,w,h)=>placed.some(r=>x<r.x+r.w+TODO_GAP&&x+w+TODO_GAP>r.x&&y<r.y+r.h+TODO_GAP&&y+h+TODO_GAP>r.y);
+    // 칸 번호: 가장 가까운 칸 경계. 메모가 하나도 없는 빈 칸은 없애고 오른쪽 메모를 왼쪽으로 당긴다.
+    const colOf=new Map(cards.map(card=>[card,Math.max(0,Math.round(card.offsetLeft/TODO_COL))]));
+    const span=card=>Math.max(1,Math.ceil((card.offsetWidth+TODO_GAP)/TODO_COL));
+    const used=new Set();for(const card of cards)for(let c=0;c<span(card);c++)used.add(colOf.get(card)+c);
+    const shift=col=>{let n=0;for(let c=0;c<col;c++)if(!used.has(c))n++;return n;};
     for(const card of cards){
-      const w=card.offsetWidth,h=card.offsetHeight;const x=Math.max(0,card.offsetLeft);let y=Math.max(0,card.offsetTop); // 가로 위치는 그대로 두고 아래로만 내린다(창 크기를 바꿔도 저장 위치가 바뀌지 않게).
-      for(let guard=0;guard<500;guard++){const hit=placed.filter(r=>x<r.x+r.w+TODO_GAP&&x+w+TODO_GAP>r.x&&y<r.y+r.h+TODO_GAP&&y+h+TODO_GAP>r.y);if(!hit.length)break;y=Math.max(...hit.map(r=>r.y+r.h+TODO_GAP));}
-      if(x!==card.offsetLeft||y!==card.offsetTop){card.style.left=x+'px';card.style.top=y+'px';moved.push(card);}
+      const w=card.offsetWidth,h=card.offsetHeight,x=(colOf.get(card)-shift(colOf.get(card)))*TODO_COL;
+      // 가능한 가장 위: 맨 위(0) 또는 이미 놓은 메모 바로 아래 중 겹치지 않는 가장 작은 높이
+      const y=[0,...placed.map(r=>r.y+r.h+TODO_GAP)].sort((a,b)=>a-b).find(top=>!hits(x,top,w,h))??0;
+      card.style.left=x+'px';card.style.top=y+'px';
+      // 저장된 위치와 달라진 메모만 서버에 저장한다.
+      const id=Number(card.dataset.todoId),row=todo.items.find(item=>item.id===id);
+      if(!row||row.pos_x!==x||row.pos_y!==y)moved.push({id,row,x,y});
       placed.push({x,y,w,h});
     }
     fitTodoBoard();
-    for(const card of moved){const id=Number(card.dataset.todoId),row=todo.items.find(item=>item.id===id),x=card.offsetLeft,y=card.offsetTop;if(row){row.pos_x=x;row.pos_y=y;}
-      api(`/todos/${id}/position`,{method:'PUT',body:{x,y}}).catch(error=>console.warn('메모 위치 저장 실패',error));}
+    return Promise.all(moved.map(({id,row,x,y})=>{if(row){row.pos_x=x;row.pos_y=y;}return api(`/todos/${id}/position`,{method:'PUT',body:{x,y}}).catch(error=>console.warn('메모 위치 저장 실패',error));})).then(()=>moved.length);
   }
   // 메모 정렬(2026-10-30): '메모 정렬' 버튼을 누르면 진행 중인 메모를 목표 날짜 순(같으면 만든 순)으로
   // 왼쪽 위부터 가로로 줄 맞춰 다시 놓는다. 메모 크기는 그대로 두고, 한 줄이 보드 너비를 넘으면 다음 줄로 내린다.
@@ -38,17 +52,49 @@ export function createExtras(ctx) {
     await flushTodoCards();
     const order=new Map(todo.items.map(item=>[item.id,item]));
     const cards=[...grid.querySelectorAll('.todo-note')].sort((a,b)=>{const x=order.get(Number(a.dataset.todoId)),y=order.get(Number(b.dataset.todoId));return String(x?.target_date??'').localeCompare(String(y?.target_date??''))||Number(a.dataset.todoId)-Number(b.dataset.todoId);});
-    const width=Math.max(grid.clientWidth,300),moves=[];let x=0,y=0,rowHeight=0;
+    const width=Math.max(grid.clientWidth,300);let x=0,y=0,rowHeight=0;
     for(const card of cards){const w=card.offsetWidth,h=card.offsetHeight;
       if(x>0&&x+w>width){x=0;y+=rowHeight+TODO_GAP;rowHeight=0;}
-      if(card.offsetLeft!==x||card.offsetTop!==y){card.style.left=x+'px';card.style.top=y+'px';moves.push({id:Number(card.dataset.todoId),x,y});}
-      x+=w+TODO_GAP;rowHeight=Math.max(rowHeight,h);}
-    fitTodoBoard();
-    await Promise.all(moves.map(({id,x,y})=>api(`/todos/${id}/position`,{method:'PUT',body:{x,y}}).then(()=>{const row=order.get(id);if(row){row.pos_x=x;row.pos_y=y;}})));
-    return moves.length;
+      card.style.left=x+'px';card.style.top=y+'px';
+      x+=Math.ceil((w+TODO_GAP)/TODO_COL)*TODO_COL;rowHeight=Math.max(rowHeight,h);} // 다음 메모도 칸 경계에서 시작
+    return settleTodoBoard(); // 빈 공간 없이 위로 정돈하고 바뀐 위치를 저장
   }
+  // 완료 보드 크기 조절(2026-10-30): 왼쪽 경계(세로 막대)를 끌어 너비를, 아래 손잡이(가로 막대)를 끌어 높이를 바꾼다.
+  // 크기는 이 브라우저에 사용자별로 기억하고, 경계를 두 번 누르면 기본 크기(너비 540px·높이 690px)로 돌아간다.
+  const doneSizeKey=()=>`portal-done-board-${state.user.id}`;
+  const DONE_DEFAULT={width:540,height:690};
+  function doneBoardSize(){try{const v=JSON.parse(localStorage.getItem(doneSizeKey()));if(v&&Number.isFinite(v.width)&&Number.isFinite(v.height))return v;}catch{}return {...DONE_DEFAULT};}
+  function clampDoneWidth(width){const layout=document.querySelector('.todo-layout');const max=Math.max(320,(layout?.clientWidth??1200)-360);return Math.round(Math.min(Math.max(width,300),max));}
+  const clampDoneHeight=height=>Math.round(Math.min(Math.max(height,260),3000));
+  function applyDoneBoardSize(size=doneBoardSize()){
+    const layout=document.querySelector('.todo-layout'),board=document.querySelector('.done-board');if(!layout||!board)return;
+    layout.style.setProperty('--done-w',clampDoneWidth(size.width)+'px');
+    board.style.height=clampDoneHeight(size.height)+'px';
+  }
+  function saveDoneBoardSize(patch){const next={...doneBoardSize(),...patch};try{localStorage.setItem(doneSizeKey(),JSON.stringify(next));}catch{}return next;}
+  // 시험 환경처럼 document 이벤트를 쓸 수 없으면 건너뛴다.
+  const onDocument=(type,fn)=>{if(typeof globalThis.document?.addEventListener==='function')document.addEventListener(type,fn);};
+  let doneDrag=null;
+  onDocument('pointerdown',event=>{
+    const bar=event.target.closest?.('.done-splitter,.done-height-handle');if(!bar||event.button!==0)return;
+    event.preventDefault();const board=document.querySelector('.done-board');
+    doneDrag={bar,vertical:bar.classList.contains('done-height-handle'),startX:event.clientX,startY:event.clientY,width:board?.offsetWidth??DONE_DEFAULT.width,height:board?.offsetHeight??DONE_DEFAULT.height,layout:bar.closest('.todo-layout'),board,pointer:event.pointerId};
+    bar.setPointerCapture?.(event.pointerId);bar.classList.add('dragging');document.body.classList.add(doneDrag.vertical?'row-resizing':'col-resizing');
+  });
+  onDocument('pointermove',event=>{if(!doneDrag||event.pointerId!==doneDrag.pointer)return;
+    if(doneDrag.vertical)doneDrag.board.style.height=clampDoneHeight(doneDrag.height+(event.clientY-doneDrag.startY))+'px';
+    else doneDrag.layout.style.setProperty('--done-w',clampDoneWidth(doneDrag.width-(event.clientX-doneDrag.startX))+'px');});
+  const endDoneDrag=event=>{if(!doneDrag||event.pointerId!==doneDrag.pointer)return;const {bar,vertical,board}=doneDrag;doneDrag=null;
+    bar.classList.remove('dragging');document.body.classList.remove('col-resizing','row-resizing');
+    if(vertical)saveDoneBoardSize({height:board.offsetHeight});else{saveDoneBoardSize({width:board.offsetWidth});layoutTodoBoard();}};
+  onDocument('pointerup',endDoneDrag);onDocument('pointercancel',endDoneDrag);
+  onDocument('dblclick',event=>{if(!event.target.closest?.('.done-splitter,.done-height-handle'))return;try{localStorage.removeItem(doneSizeKey());}catch{}applyDoneBoardSize();layoutTodoBoard();toast('완료 보드를 기본 크기로 되돌렸습니다.');});
+  onDocument('keydown',event=>{const handle=event.target.closest?.('.done-height-handle');if(handle&&['ArrowUp','ArrowDown'].includes(event.key)){event.preventDefault();const board=document.querySelector('.done-board'),height=clampDoneHeight(board.offsetHeight+(event.key==='ArrowDown'?20:-20));board.style.height=height+'px';saveDoneBoardSize({height});return;}
+    const bar=event.target.closest?.('.done-splitter');if(!bar||!['ArrowLeft','ArrowRight'].includes(event.key))return;event.preventDefault();
+    const width=clampDoneWidth((document.querySelector('.done-board')?.offsetWidth??DONE_DEFAULT.width)+(event.key==='ArrowLeft'?20:-20));bar.closest('.todo-layout').style.setProperty('--done-w',width+'px');saveDoneBoardSize({width});layoutTodoBoard();});
   function layoutTodoBoard(settle={}){
     const grid=document.querySelector('#todo-grid');if(!grid)return;
+    if(!doneDrag)applyDoneBoardSize(); // 창 크기가 바뀌면 완료 보드 너비를 다시 맞춘다
     const cards=[...grid.querySelectorAll('.todo-note')];
     if(!freeBoard()){grid.classList.remove('free');grid.style.height='';for(const card of cards){card.style.left='';card.style.top='';card.style.width='';card.style.height='';}return;}
     for(const card of cards){const size=todoSize(card.dataset.todoId);if(size){card.style.width=size.width+'px';card.style.height=size.height+'px';}}
@@ -243,8 +289,9 @@ export function createExtras(ctx) {
     if(state.view!=='todos')return;
     todo.items=result.todos;todo.today=result.today;todo.todayOpen=result.today_open;
     const pending=todo.items.filter(row=>!row.done),completed=todo.items.filter(row=>row.done);
-    const todoPanel=`<section class="todo-panel" aria-labelledby="todo-heading"><div class="todo-layout"><div class="todo-active"><div class="todo-head"><div><p class="eyebrow">STICKY NOTES</p><h2 id="todo-heading">오늘의 할 일 <small id="todo-today-count">오늘 ${todo.todayOpen}건</small></h2><p>노란 메모지에 바로 입력하세요. 빈 공간을 마우스 오른쪽 버튼으로 누르면 그 자리에 새 메모지가 만들어지고, 메모 위·아래 테두리를 끌면 원하는 위치로 옮길 수 있습니다.</p></div>${pending.length>1?'<button type="button" class="todo-arrange" data-action="todo-arrange" title="목표 날짜 순으로 왼쪽 위부터 줄 맞춰 놓습니다">메모 정렬</button>':''}</div><div class="todo-grid" id="todo-grid" tabindex="0" aria-label="진행 중인 메모. 빈 공간에서 오른쪽 클릭으로 새 메모 추가">${pending.map(todoCard).join('')}</div></div><aside class="done-board" aria-label="완료 보드"><div class="done-board-head"><div><p class="eyebrow">FINISHED NOTES</p><h2>완료 보드 <small>${completed.length}건</small></h2></div><span aria-hidden="true">✓</span></div><p class="done-board-hint">완료한 메모를 누르면 크게 펼쳐집니다.</p><div class="done-board-notes">${completed.length?completed.map(doneNote).join(''):`<p class="done-board-empty">완료 체크한 메모가 여기에 붙습니다.</p>`}</div></aside></div></section>`;
+    const todoPanel=`<section class="todo-panel" aria-labelledby="todo-heading"><div class="todo-layout"><div class="todo-active"><div class="todo-head"><div><p class="eyebrow">STICKY NOTES</p><h2 id="todo-heading">오늘의 할 일 <small id="todo-today-count">오늘 ${todo.todayOpen}건</small></h2><p>노란 메모지에 바로 입력하세요. 빈 공간을 마우스 오른쪽 버튼으로 누르면 그 자리에 새 메모지가 만들어지고, 메모 위·아래 테두리를 끌면 원하는 위치로 옮길 수 있습니다.</p></div>${pending.length>1?'<button type="button" class="todo-arrange" data-action="todo-arrange" title="목표 날짜 순으로 왼쪽 위부터 줄 맞춰 놓습니다">메모 정렬</button>':''}</div><div class="todo-grid" id="todo-grid" tabindex="0" aria-label="진행 중인 메모. 빈 공간에서 오른쪽 클릭으로 새 메모 추가">${pending.map(todoCard).join('')}</div></div><div class="done-splitter" role="separator" tabindex="0" aria-orientation="vertical" aria-label="완료 보드 너비 조절(왼쪽·오른쪽 화살표, 두 번 누르면 기본 크기)" title="끌어서 완료 보드 너비 조절 · 두 번 누르면 기본 크기"></div><div class="done-wrap"><aside class="done-board" aria-label="완료 보드"><div class="done-board-head"><div><p class="eyebrow">FINISHED NOTES</p><h2>완료 보드 <small>${completed.length}건</small></h2></div><span aria-hidden="true">✓</span></div><p class="done-board-hint">완료한 메모를 누르면 크게 펼쳐집니다.</p><div class="done-board-notes">${completed.length?completed.map(doneNote).join(''):`<p class="done-board-empty">완료 체크한 메모가 여기에 붙습니다.</p>`}</div></aside><div class="done-height-handle" role="separator" tabindex="0" aria-orientation="horizontal" aria-label="완료 보드 높이 조절(위·아래 화살표, 두 번 누르면 기본 크기)" title="끌어서 완료 보드 높이 조절 · 두 번 누르면 기본 크기"></div></div></div></section>`;
     document.querySelector('#content').innerHTML=pageHead('PERSONAL NOTES','TO-DO List','할 일을 메모로 정리하고 완료 상태를 관리하세요.')+todoPanel;
+    applyDoneBoardSize();
     layoutTodoBoard(options.settle);
   }
   async function todoFileDrop(card,files){
