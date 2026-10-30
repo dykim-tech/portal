@@ -7,13 +7,31 @@ export function createExtras(ctx) {
   const todoSizeKey=id=>`portal-todo-size-${state.user.id}-${id}`;
   // 메모 크기는 이 브라우저에 기억한다. 보안 정책(CSP)상 style 속성 대신 스크립트로 적용한다.
   function todoSize(id){try{const value=JSON.parse(localStorage.getItem(todoSizeKey(id)));if(value&&value.width>=250&&value.width<=900&&value.height>=205&&value.height<=900)return value;}catch{}return null;}
-  function rememberTodoSize(card){if(!card.isConnected)return;const {width,height}=card.getBoundingClientRect();try{localStorage.setItem(todoSizeKey(card.dataset.todoId),JSON.stringify({width:Math.round(width),height:Math.round(height)}));}catch{}fitTodoBoard();}
+  function rememberTodoSize(card){if(!card.isConnected)return;const {width,height}=card.getBoundingClientRect();try{localStorage.setItem(todoSizeKey(card.dataset.todoId),JSON.stringify({width:Math.round(width),height:Math.round(height)}));}catch{}settleTodoBoard({first:[Number(card.dataset.todoId)]});}
   const lockIcon='<svg viewBox="0 0 20 20" width="14" height="14" aria-hidden="true" focusable="false"><rect x="4" y="9" width="12" height="8.5" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M6.8 9V6.6a3.2 3.2 0 0 1 6.4 0V9" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>';
   // ---- 메모 자유 배치: 메모 보드 안에서 끌어 원하는 위치에 놓는다(위치는 서버에 저장). 좁은 화면에서는 세로로 쌓는다.
   const TODO_GAP=15;let todoTop=10,todoDrag=null;
   const freeBoard=()=>!matchMedia('(max-width:720px)').matches;
   function fitTodoBoard(){const grid=document.querySelector('#todo-grid');if(!grid?.classList.contains('free'))return;let bottom=0;for(const card of grid.querySelectorAll('.todo-note'))bottom=Math.max(bottom,card.offsetTop+card.offsetHeight);grid.style.height=Math.max(320,bottom+40)+'px';}
-  function layoutTodoBoard(){
+  // 메모끼리 겹치지 않게 정리(2026-10-30): 메모를 키우거나 옮기거나 새로 만들면 겹친 메모를 아래로 내린다.
+  // first: 자리를 지킬 메모(방금 키우거나 옮긴 메모), last: 빈 자리를 찾아 내려갈 메모(방금 만든 메모). 바뀐 위치는 서버에 저장한다.
+  function settleTodoBoard({first=[],last=[]}={}){
+    const grid=document.querySelector('#todo-grid.free');if(!grid)return;
+    const cards=[...grid.querySelectorAll('.todo-note')];
+    const rank=card=>first.includes(Number(card.dataset.todoId))?0:last.includes(Number(card.dataset.todoId))?2:1;
+    cards.sort((a,b)=>rank(a)-rank(b)||a.offsetTop-b.offsetTop||a.offsetLeft-b.offsetLeft);
+    const placed=[],moved=[];
+    for(const card of cards){
+      const w=card.offsetWidth,h=card.offsetHeight;const x=Math.max(0,card.offsetLeft);let y=Math.max(0,card.offsetTop); // 가로 위치는 그대로 두고 아래로만 내린다(창 크기를 바꿔도 저장 위치가 바뀌지 않게).
+      for(let guard=0;guard<500;guard++){const hit=placed.filter(r=>x<r.x+r.w+TODO_GAP&&x+w+TODO_GAP>r.x&&y<r.y+r.h+TODO_GAP&&y+h+TODO_GAP>r.y);if(!hit.length)break;y=Math.max(...hit.map(r=>r.y+r.h+TODO_GAP));}
+      if(x!==card.offsetLeft||y!==card.offsetTop){card.style.left=x+'px';card.style.top=y+'px';moved.push(card);}
+      placed.push({x,y,w,h});
+    }
+    fitTodoBoard();
+    for(const card of moved){const id=Number(card.dataset.todoId),row=todo.items.find(item=>item.id===id),x=card.offsetLeft,y=card.offsetTop;if(row){row.pos_x=x;row.pos_y=y;}
+      api(`/todos/${id}/position`,{method:'PUT',body:{x,y}}).catch(error=>console.warn('메모 위치 저장 실패',error));}
+  }
+  function layoutTodoBoard(settle={}){
     const grid=document.querySelector('#todo-grid');if(!grid)return;
     const cards=[...grid.querySelectorAll('.todo-note')];
     if(!freeBoard()){grid.classList.remove('free');grid.style.height='';for(const card of cards){card.style.left='';card.style.top='';card.style.width='';card.style.height='';}return;}
@@ -24,7 +42,7 @@ export function createExtras(ctx) {
     for(const card of cards){const row=todo.items.find(item=>item.id===Number(card.dataset.todoId));if(row&&row.pos_x!==null&&row.pos_x!==undefined&&row.pos_y!==null&&row.pos_y!==undefined){card.style.left=row.pos_x+'px';card.style.top=row.pos_y+'px';placed.push({x:row.pos_x,y:row.pos_y,w:card.offsetWidth,h:card.offsetHeight});}else free.push(card);}
     // 위치를 정한 적 없는 메모는 왼쪽 위부터 빈 자리에 차례로 놓는다.
     for(const card of free){const w=card.offsetWidth,h=card.offsetHeight;let spot=null;for(let y=0;!spot&&y<20000;y+=20)for(let x=0;x+w<=width||x===0;x+=20){if(!overlaps(x,y,w,h)){spot={x,y};break;}if(x+w>width)break;}spot??={x:0,y:0};card.style.left=spot.x+'px';card.style.top=spot.y+'px';placed.push({...spot,w,h});}
-    fitTodoBoard();
+    settleTodoBoard(settle);
   }
   function todoDragStart(event){
     if(event.button!==0||!freeBoard())return false;
@@ -56,7 +74,7 @@ export function createExtras(ctx) {
     const x=card.offsetLeft,y=card.offsetTop,row=todo.items.find(item=>item.id===id);
     await api(`/todos/${id}/position`,{method:'PUT',body:{x,y}});
     if(row){row.pos_x=x;row.pos_y=y;}
-    fitTodoBoard();return true;
+    settleTodoBoard({first:[id]});return true;
   }
   const report = { from: '', to: '' };
   const levelNames = ['대분류', '중분류', '소분류'];
@@ -183,7 +201,7 @@ export function createExtras(ctx) {
   async function createTodoNote(point){
     await flushTodoCards();
     const result=await api('/todos',{method:'POST',body:{title:'',body:'',target_date:todo.today,...(point?{pos_x:point.x,pos_y:point.y}:{})}});
-    await renderTodos();
+    await renderTodos({settle:{last:[result.todo.id]}}); // 새 메모가 다른 메모와 겹치면 새 메모를 아래 빈 자리로 내린다.
     const memo=document.querySelector(`#todo-grid [data-todo-id="${result.todo.id}"] .todo-note-body`);
     memo?.focus();
   }
@@ -203,7 +221,7 @@ export function createExtras(ctx) {
     await api('/todos/'+id,{method:'PATCH',body:{done:target.checked}});
     await renderTodos();
   }
-  async function renderTodos() {
+  async function renderTodos(options={}) {
     if(state.view==='todos'&&document.querySelector('#todo-grid'))await flushTodoCards();
     const result=await api('/todos');
     if(state.view!=='todos')return;
@@ -211,7 +229,7 @@ export function createExtras(ctx) {
     const pending=todo.items.filter(row=>!row.done),completed=todo.items.filter(row=>row.done);
     const todoPanel=`<section class="todo-panel" aria-labelledby="todo-heading"><div class="todo-layout"><div class="todo-active"><div class="todo-head"><div><p class="eyebrow">STICKY NOTES</p><h2 id="todo-heading">오늘의 할 일 <small id="todo-today-count">오늘 ${todo.todayOpen}건</small></h2><p>노란 메모지에 바로 입력하세요. 빈 공간을 마우스 오른쪽 버튼으로 누르면 그 자리에 새 메모지가 만들어지고, 메모 위·아래 테두리를 끌면 원하는 위치로 옮길 수 있습니다.</p></div></div><div class="todo-grid" id="todo-grid" tabindex="0" aria-label="진행 중인 메모. 빈 공간에서 오른쪽 클릭으로 새 메모 추가">${pending.map(todoCard).join('')}</div></div><aside class="done-board" aria-label="완료 보드"><div class="done-board-head"><div><p class="eyebrow">FINISHED NOTES</p><h2>완료 보드 <small>${completed.length}건</small></h2></div><span aria-hidden="true">✓</span></div><p class="done-board-hint">완료한 메모를 누르면 크게 펼쳐집니다.</p><div class="done-board-notes">${completed.length?completed.map(doneNote).join(''):`<p class="done-board-empty">완료 체크한 메모가 여기에 붙습니다.</p>`}</div></aside></div></section>`;
     document.querySelector('#content').innerHTML=pageHead('PERSONAL NOTES','TO-DO List','할 일을 메모로 정리하고 완료 상태를 관리하세요.')+todoPanel;
-    layoutTodoBoard();
+    layoutTodoBoard(options.settle);
   }
   async function todoFileDrop(card,files){
     if(card.classList.contains('locked'))throw new Error('잠긴 메모에는 파일을 첨부할 수 없습니다. 잠금을 해제해 주세요.');

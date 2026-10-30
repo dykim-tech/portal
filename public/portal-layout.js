@@ -26,7 +26,7 @@ export const portalGroups = [
   ['업무', ['meetings', 'drafts', 'work', 'todos']],
   ['설치·자산', ['installations', 'projects', 'items']],
   ['자료·리포트', ['library', 'reports']],
-  ['바로가기', ['tools', 'outlook', 'gracecns', 'nas']],
+  ['바로가기', ['tools', 'outlook', 'nas']],
 ];
 const adminViews = [['users', '사용자 관리'], ['backups', '백업/복구'], ['operations', '운영관리'], ['usage', '사용량 관리']];
 
@@ -39,11 +39,12 @@ export function portalNavHtml({ shown, names, nasLinks, admin }) {
     return [title, items, ids];
   });
   // 묶음에 없는 새 메뉴는 '바로가기' 끝에 넣는다(설정 제외).
-  const extra = shown.filter(id => !grouped.has(id) && id !== 'settings' && id !== 'dashboard');
+  // GRACECNS는 묶음에서 빼서 가로 메뉴 오른쪽 끝에 따로 둔다(2026-10-30).
+  const extra = shown.filter(id => !grouped.has(id) && !['settings', 'dashboard', 'gracecns'].includes(id));
   if (extra.length) groups[3][1].push(...extra.map(item));
   groups.push([admin ? '관리' : '설정', [item('settings'), ...(admin ? adminViews.map(([id, label]) => `<button type="button" data-view="${id}">${label}</button>`) : [])], ['settings', ...adminViews.map(([id]) => id)]]);
   return `<button type="button" class="ph-home" data-view="dashboard">홈</button>` + groups.filter(([, items]) => items.length).map(([title, items, ids]) =>
-    `<div class="ph-menu" data-views="${ids.join(' ')}"><button type="button" class="ph-menu-button" aria-haspopup="true">${esc(title)}</button><div class="ph-sub">${items.join('')}</div></div>`).join('');
+    `<div class="ph-menu" data-views="${ids.join(' ')}"><button type="button" class="ph-menu-button" aria-haspopup="true">${esc(title)}</button><div class="ph-sub">${items.join('')}</div></div>`).join('') + (visible.has('gracecns') ? `<button type="button" class="ph-nav-link" data-view="gracecns" title="새 탭에서 열기">${esc(names.get('gracecns'))} <small>↗</small></button>` : '');
 }
 
 export function portalShellHtml({ user, roleLabel }) {
