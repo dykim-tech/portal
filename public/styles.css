@@ -112,7 +112,7 @@
 .todo-panel{margin:0 0 28px}
 .todo-layout{display:grid;grid-template-columns:minmax(0,1fr) minmax(480px,590px);gap:26px;align-items:start}.todo-active{min-width:0}
 .todo-head{display:flex;align-items:end;justify-content:space-between;gap:16px;margin-bottom:16px}
-.todo-head .eyebrow{margin-bottom:5px}
+.todo-head .eyebrow{margin-bottom:5px}.todo-arrange{flex:none;align-self:flex-end;padding:8px 14px;background:#fffaf0;border-color:#e7dfbd;color:#5b4d1a}.todo-arrange:hover{background:#fff1c2}[data-theme=dark] .todo-arrange{background:#3d3928;color:#f5eccb;border-color:#71632d}[data-theme=dark] .todo-arrange:hover{background:#4b421e}
 .todo-head h2{margin:0 0 5px;font-size:1.35rem}
 .todo-head h2 small{margin-left:8px;font-weight:400}
 .todo-head p:last-child{margin:0;color:var(--muted);font-size:.875rem}
