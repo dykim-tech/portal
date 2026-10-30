@@ -607,6 +607,10 @@ document.addEventListener('focusout',event=>{if(event.target.matches?.('input[da
 document.addEventListener('keydown',event=>{if(event.key==='Enter'&&event.target.matches?.('input[data-lock-title]')){event.preventDefault();event.target.blur();}});
 document.addEventListener('focusout',event=>{extras.todoBlur(event.target).catch(error=>toast(error.message));});
 let activeTodoSizeCard=null;
+// TO-DO 메모를 펼친 상태에서 그 메모 밖을 누르거나 Esc를 누르면 원래 크기로(드래그·크기 조절보다 먼저 처리).
+document.addEventListener('pointerdown',event=>{if(state.view!=='todos'||!document.querySelector('#todo-grid .todo-note.expanded'))return;const card=event.target.closest?.('.todo-note');extras.collapseTodos(card?.classList.contains('expanded')?card:null);},{capture:true});
+document.addEventListener('keydown',event=>{if(event.key==='Escape'&&state.view==='todos'&&document.querySelector('#todo-grid .todo-note.expanded'))extras.collapseTodos();});
+document.addEventListener('input',event=>{const card=event.target.closest?.('#todo-grid .todo-note.expanded');if(card&&event.target.matches('.todo-note-body'))extras.fitTodoExpanded(card);});
 document.addEventListener('pointerdown',event=>{if(state.view==='todos'&&extras.todoDragStart(event)){activeTodoSizeCard=null;return;}activeTodoSizeCard=event.target.closest?.('.todo-note')??null;});
 document.addEventListener('pointermove',event=>{extras.todoDragMove(event);});
 document.addEventListener('pointercancel',event=>{extras.todoDragEnd(event).catch(error=>toast(error.message));});
