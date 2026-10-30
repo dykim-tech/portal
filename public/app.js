@@ -589,6 +589,8 @@ document.addEventListener('contextmenu',event=>{
 });
 document.addEventListener('contextmenu',event=>{extras.todoContextMenu(event).catch(error=>toast(error.message));});
 document.addEventListener('input',event=>{extras.todoInput(event.target);});
+document.addEventListener('focusout',event=>{if(event.target.matches?.('input[data-lock-title]'))extras.saveLockTitle(event.target).catch(error=>toast(error.message));});
+document.addEventListener('keydown',event=>{if(event.key==='Enter'&&event.target.matches?.('input[data-lock-title]')){event.preventDefault();event.target.blur();}});
 document.addEventListener('focusout',event=>{extras.todoBlur(event.target).catch(error=>toast(error.message));});
 let activeTodoSizeCard=null;
 document.addEventListener('pointerdown',event=>{if(state.view==='todos'&&extras.todoDragStart(event)){activeTodoSizeCard=null;return;}activeTodoSizeCard=event.target.closest?.('.todo-note')??null;});

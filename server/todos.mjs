@@ -9,6 +9,8 @@ const scrypt=promisify(scryptCallback);
 // 메모 잠금: 메모마다 따로 정한 비밀번호(scrypt 해시만 저장). 잠긴 메모는 내용·첨부를 응답에 넣지 않는다.
 async function lockHash(password){const salt=randomBytes(16).toString('hex');return `${salt}:${(await scrypt(password,salt,64)).toString('hex')}`;}
 async function lockMatches(password,stored){const [salt,expected]=String(stored).split(':');if(!salt||!expected)return false;const actual=await scrypt(password,salt,64),wanted=Buffer.from(expected,'hex');return wanted.length===actual.length&&timingSafeEqual(actual,wanted);}
+export const LOCK_TITLE_MAX=60;
+export function lockTitle(value){if(value===undefined||value===null)return '';if(typeof value!=='string')throw fail(400,'잠금 제목 형식이 올바르지 않습니다.');const title=value.replace(/\s+/g,' ').trim();if(title.length>LOCK_TITLE_MAX)throw fail(400,`잠금 제목은 ${LOCK_TITLE_MAX}자까지 쓸 수 있습니다.`);return title;}
 function lockPassword(value){if(typeof value!=='string'||value.length<4||value.length>64)throw fail(400,'잠금 비밀번호는 4~64자로 입력해 주세요.');return value;}
 export function publicTodo(row){if(!row)return row;const {lock_hash,...rest}=row;return lock_hash?{...rest,title:'',body:'',locked:true}:{...rest,locked:false};}
 const position=value=>{const n=Number(value);if(value===null||typeof value==='boolean'||!Number.isInteger(n)||n<0||n>20000)throw fail(400,'메모 위치를 확인해 주세요.');return n;};
@@ -48,6 +50,8 @@ export function initializeTodos(db){
   if(!columns.has('pos_x'))db.exec('ALTER TABLE todos ADD COLUMN pos_x INTEGER');
   if(!columns.has('pos_y'))db.exec('ALTER TABLE todos ADD COLUMN pos_y INTEGER');
   if(!columns.has('lock_hash'))db.exec('ALTER TABLE todos ADD COLUMN lock_hash TEXT');
+  // 잠금 제목(2026-10-30): 잠근 뒤에도 보이는 짧은 제목. 메모 내용과 달리 비밀이 아니므로 잠긴 상태에서도 보여 주고 고칠 수 있다.
+  if(!columns.has('lock_title'))db.exec("ALTER TABLE todos ADD COLUMN lock_title TEXT NOT NULL DEFAULT ''");
 }
 export function registerTodos(app,{db,upload}){
   const owned=(req)=>{
@@ -90,9 +94,14 @@ export function registerTodos(app,{db,upload}){
     db.prepare('UPDATE todos SET pos_x=?,pos_y=? WHERE id=?').run(x,y,row.id);
     res.json({ok:true,x,y});
   });
+  app.put('/api/todos/:id/lock-title',(req,res)=>{
+    const row=owned(req),title=lockTitle(req.body.title);
+    db.prepare('UPDATE todos SET lock_title=? WHERE id=?').run(title,row.id);
+    res.json({todo:get(row.id)});
+  });
   app.post('/api/todos/:id/lock',async(req,res)=>{
-    const row=unlocked(owned(req)),hash=await lockHash(lockPassword(req.body.password));
-    db.prepare('UPDATE todos SET lock_hash=? WHERE id=? AND lock_hash IS NULL').run(hash,row.id);
+    const row=unlocked(owned(req)),title=lockTitle(req.body.lock_title),hash=await lockHash(lockPassword(req.body.password));
+    db.prepare('UPDATE todos SET lock_hash=?,lock_title=? WHERE id=? AND lock_hash IS NULL').run(hash,title,row.id);
     res.json({todo:get(row.id)});
   });
   // 잠금 해제: 비밀번호가 맞으면 잠금을 없앤다. 5번 틀리면 1분 동안 시도할 수 없다.

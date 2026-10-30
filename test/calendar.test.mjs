@@ -68,3 +68,43 @@ test('calendar events are per user and the calendar shows own TO-DO items by tar
     assert.equal((await call('/search?q=' + encodeURIComponent('다음 달'), 'GET', undefined, viewer)).data.total, 0);
   } finally { await new Promise(r => server.close(r)); portal.db.close(); rmSync(dataDir, { recursive: true, force: true }); }
 });
+
+test('lock title: set when locking, editable while locked, shown instead of content everywhere', async () => {
+  const origin = 'http://localhost:3100', dataDir = mkdtempSync(join(tmpdir(), 'portal-locktitle-'));
+  const portal = createPortal({ dataDir, backupDir: join(dataDir, 'backups'), origin, selfCheck: false, draftMailPollMs: 0, nasMeasureCheckMs: 0, holidayFetch: null });
+  const server = portal.app.listen(0, '127.0.0.1'); await new Promise(r => server.once('listening', r));
+  const base = 'http://127.0.0.1:' + server.address().port;
+  const call = async (path, method = 'GET', body, cookie = '') => {
+    const response = await fetch(base + '/api' + path, { method, headers: { Origin: origin, 'X-Portal-Request': '1', Cookie: cookie, 'Content-Type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+    return { status: response.status, data: await response.json().catch(() => null), cookie: response.headers.get('set-cookie')?.split(';')[0] };
+  };
+  try {
+    await call('/auth/setup', 'POST', { token: readFileSync(portal.tokenPath, 'utf8'), name: '관리자', username: 'admin', email: 'admin@example.test', password: 'test-password-1234' });
+    const admin = (await call('/auth/login', 'POST', { username: 'admin', password: 'test-password-1234' })).cookie;
+    await call('/users', 'POST', { name: '조회자', username: 'viewer', email: 'viewer@example.test', role: 'viewer', password: 'test-password-1234' }, admin);
+    const viewer = (await call('/auth/login', 'POST', { username: 'viewer', password: 'test-password-1234' })).cookie;
+    const todo = (await call('/todos', 'POST', { title: '', body: '비밀번호 1234 메모', target_date: '2026-10-30' }, admin)).data.todo;
+
+    assert.equal((await call(`/todos/${todo.id}/lock`, 'POST', { password: 'abcd', lock_title: 'x'.repeat(61) }, admin)).status, 400);
+    const locked = (await call(`/todos/${todo.id}/lock`, 'POST', { password: 'abcd', lock_title: '  고객사   VPN 정보 ' }, admin)).data.todo;
+    assert.equal(locked.locked, true); assert.equal(locked.lock_title, '고객사 VPN 정보'); assert.equal(locked.body, '');
+
+    // 잠긴 상태에서 제목만 고칠 수 있고, 내용은 그대로 잠겨 있다
+    assert.equal((await call(`/todos/${todo.id}/lock-title`, 'PUT', { title: '다른 사람' }, viewer)).status, 404);
+    assert.equal((await call(`/todos/${todo.id}/lock-title`, 'PUT', { title: '고객사 VPN 접속 정보' }, admin)).data.todo.lock_title, '고객사 VPN 접속 정보');
+    const list = (await call('/todos', 'GET', undefined, admin)).data.todos.find(t => t.id === todo.id);
+    assert.equal(list.lock_title, '고객사 VPN 접속 정보'); assert.equal(list.body, ''); assert.equal(list.locked, true);
+
+    // 달력·검색: 잠금 제목만 보이고 내용으로는 찾을 수 없다
+    const cal = (await call('/calendar-events?from=2026-10-01&to=2026-10-31', 'GET', undefined, admin)).data.todos.find(t => t.id === todo.id);
+    assert.deepEqual([cal.locked, cal.text], [true, '고객사 VPN 접속 정보']);
+    assert.equal((await call('/search?q=1234', 'GET', undefined, admin)).data.total, 0);
+    const found = (await call('/search?q=' + encodeURIComponent('VPN 접속'), 'GET', undefined, admin)).data.groups.find(g => g.id === 'todos');
+    assert.equal(found.rows[0].title, '🔒 고객사 VPN 접속 정보'); assert.equal(found.rows[0].snippet, '');
+
+    // 잠금을 풀면 내용이 보이고, 제목은 다음 잠금 때 다시 쓸 수 있게 남아 있다
+    const opened = (await call(`/todos/${todo.id}/unlock`, 'POST', { password: 'abcd' }, admin)).data.todo;
+    assert.equal(opened.body, '비밀번호 1234 메모'); assert.equal(opened.lock_title, '고객사 VPN 접속 정보');
+    assert.equal((await call('/search?q=1234', 'GET', undefined, admin)).data.total, 1);
+  } finally { await new Promise(r => server.close(r)); portal.db.close(); rmSync(dataDir, { recursive: true, force: true }); }
+});

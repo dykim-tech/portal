@@ -41,9 +41,9 @@ export function registerCalendar(app, { db }) {
     if (!isDate(from) || !isDate(to) || from > to) throw fail(400, '조회 기간을 확인해 주세요.');
     if (Date.parse(to) - Date.parse(from) > 400 * 86400000) throw fail(400, '조회 기간은 400일 이내로 정해 주세요.');
     const events = db.prepare(`${select} WHERE user_id=? AND event_date BETWEEN ? AND ? ORDER BY event_date, event_time='' DESC, event_time, id`).all(req.user.id, from, to);
-    // TO-DO List 연동: 본인 메모를 목표 날짜(target_date)에 함께 보여 준다. 잠긴 메모는 내용 없이 '잠긴 메모'로만 표시한다.
-    const todos = db.prepare("SELECT id, target_date AS date, title, body, done, lock_hash FROM todos WHERE user_id=? AND target_date BETWEEN ? AND ? ORDER BY target_date, done, id").all(req.user.id, from, to)
-      .map(row => ({ id: row.id, date: row.date, done: Boolean(row.done), locked: Boolean(row.lock_hash), text: row.lock_hash ? '' : todoText(row) }));
+    // TO-DO List 연동: 본인 메모를 목표 날짜(target_date)에 함께 보여 준다. 잠긴 메모는 내용 없이 잠금 제목만 보여 준다.
+    const todos = db.prepare("SELECT id, target_date AS date, title, body, done, lock_hash, lock_title FROM todos WHERE user_id=? AND target_date BETWEEN ? AND ? ORDER BY target_date, done, id").all(req.user.id, from, to)
+      .map(row => ({ id: row.id, date: row.date, done: Boolean(row.done), locked: Boolean(row.lock_hash), text: row.lock_hash ? (row.lock_title ?? '') : todoText(row) }));
     res.json({ events, todos });
   });
   app.post('/api/calendar-events', (req, res) => {

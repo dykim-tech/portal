@@ -90,7 +90,7 @@ export function portalCalendarHtml({ year, month, holidays = [], events = [], to
   const byDate = new Map(); for (const h of holidays) byDate.set(h.date, [...(byDate.get(h.date) ?? []), h.name]);
   const eventsBy = new Map(); for (const e of events) eventsBy.set(e.date, [...(eventsBy.get(e.date) ?? []), e]);
   const todosBy = new Map(); for (const t of todos) todosBy.set(t.date, [...(todosBy.get(t.date) ?? []), t]);
-  const todoLabel = t => t.locked ? '잠긴 메모' : t.text;
+  const todoLabel = t => t.locked ? '🔒 ' + (t.text || '잠긴 메모') : t.text;
   const cells = [];
   for (let i = 0; i < first; i++) cells.push('<span class="ph-cal-day ph-cal-blank" aria-hidden="true"></span>');
   for (let day = 1; day <= days; day++) {
@@ -106,7 +106,7 @@ export function portalCalendarHtml({ year, month, holidays = [], events = [], to
   if (selected) {
     const [, m, d] = selected.split('-').map(Number), wd = weekdayNames[new Date(selected + 'T00:00:00Z').getUTCDay()];
     const rows = (eventsBy.get(selected) ?? []).map(e => `<li><span class="ph-ev-time">${e.time ? esc(e.time) : '종일'}</span><span class="ph-ev-title">${esc(e.title)}</span><button type="button" class="ph-ev-delete" data-action="portal-event-delete" data-id="${Number(e.id)}" aria-label="일정 삭제: ${esc(e.title)}" title="삭제">×</button></li>`).join('');
-    const todoRows = (todosBy.get(selected) ?? []).map(t => `<li class="ph-todo-row${t.done ? ' done' : ''}"><span class="ph-ev-time">${t.done ? '완료' : '할 일'}</span><button type="button" class="ph-todo-link" data-view="todos" title="TO-DO List에서 열기">${t.locked ? '🔒 잠긴 메모' : esc(t.text)}</button><span aria-hidden="true"></span></li>`).join('');
+    const todoRows = (todosBy.get(selected) ?? []).map(t => `<li class="ph-todo-row${t.done ? ' done' : ''}"><span class="ph-ev-time">${t.done ? '완료' : '할 일'}</span><button type="button" class="ph-todo-link" data-view="todos" title="TO-DO List에서 열기">${esc(todoLabel(t))}</button><span aria-hidden="true"></span></li>`).join('');
     const holidayNames = byDate.get(selected);
     agenda = `<section class="ph-agenda" aria-label="${m}월 ${d}일 일정"><h3>${m}월 ${d}일 (${wd})${selected === today ? ' <small>오늘</small>' : ''}${holidayNames ? ` <em>${esc(holidayNames.join(', '))}</em>` : ''}</h3>
       ${eventsError ? `<p class="ph-cal-error">${esc(eventsError)}</p>` : rows || todoRows ? `<ul class="ph-ev-list">${rows}${todoRows}</ul>` : '<p class="muted ph-ev-empty">적힌 일정·할 일이 없습니다.</p>'}
