@@ -78,7 +78,14 @@ async function savePortalNote(id){const st=noteState(id);clearTimeout(st.timer);
     try{const {note}=await api('/dashboard-notes/'+id,{method:'PUT',body:{body,version:st.version}});st.version=note.version;st.saved=note.body;if(st.pending===note.body)st.pending=null;const s=status();if(s)s.textContent='저장됨 · '+noteTime(note.updated_at);}
     catch(error){if(/다른 창/.test(error.message)){st.pending=null;await renderPortalNotes();const s=status();if(s)s.textContent=error.message;}else{const s=status();if(s)s.textContent='저장하지 못했습니다: '+error.message;}}})();
   await st.saving;st.saving=null;}
-document.addEventListener('input',event=>{if(event.target.matches?.('[data-note-body]'))notePortalInput(event.target);});
+// 메모 펼치기(＋): 글 칸을 내용 높이에 맞춰 늘려 전체를 보여 준다(화면 높이의 75%까지, 넘으면 스크롤). 메모 밖을 누르거나 Esc를 누르면 원래 크기로.
+function fitExpandedMemo(memo){const area=memo?.querySelector('.ph-memo-body');if(!area)return;area.style.height='auto';const max=Math.round(window.innerHeight*.75);area.style.height=Math.min(Math.max(area.scrollHeight+4,170),max)+'px';}
+function setMemoExpanded(memo,open){if(!memo)return;memo.classList.toggle('expanded',open);const button=memo.querySelector('.ph-memo-expand');if(button){button.textContent=open?'−':'+';button.setAttribute('aria-expanded',String(open));button.title=open?'원래 크기로':'전체 보기 (메모 밖을 누르면 원래 크기로)';}
+  const area=memo.querySelector('.ph-memo-body');if(open)fitExpandedMemo(memo);else if(area)area.style.height='';}
+function collapseMemos(except){document.querySelectorAll('.ph-memo.expanded').forEach(memo=>{if(memo!==except)setMemoExpanded(memo,false);});}
+document.addEventListener('pointerdown',event=>{if(!document.querySelector('.ph-memo.expanded'))return;const memo=event.target.closest?.('.ph-memo');collapseMemos(memo?.classList.contains('expanded')?memo:null);});
+document.addEventListener('keydown',event=>{if(event.key==='Escape'&&document.querySelector('.ph-memo.expanded')){collapseMemos(null);}});
+document.addEventListener('input',event=>{if(event.target.matches?.('[data-note-body]')){notePortalInput(event.target);const memo=event.target.closest('.ph-memo');if(memo?.classList.contains('expanded'))fitExpandedMemo(memo);}});
 document.addEventListener('focusout',event=>{if(event.target.matches?.('[data-note-body]'))savePortalNote(Number(event.target.dataset.noteBody));});
 // 첫 화면 달력: 공휴일은 서버가 Google 공개 캘린더에서 받아 둔 목록(/api/holidays)을 쓴다.
 const portalCal={year:0,month:0,data:null,loadedAt:0,selected:'',events:[],todos:[],eventsKey:'',eventsError:''};
@@ -827,6 +834,7 @@ document.addEventListener('click',async event=>{
     if(action==='app-reload'){location.reload();return;}
     if(action==='portal-new-draft'){await navigateTo('drafts');await drafts.action('draft-new');return;}
     if(action==='portal-note-delete'){const area=document.querySelector(`[data-note-body="${Number(id)}"]`);if(area?.value.trim()&&!confirm('이 메모를 삭제할까요? 적은 내용도 함께 지워집니다.'))return;const st=noteState(Number(id));clearTimeout(st.timer);st.pending=null;if(area)st.saved=area.value;await api('/dashboard-notes/'+Number(id),{method:'DELETE'});portalNotes.items.delete(Number(id));await renderPortalNotes();toast('메모를 삭제했습니다.');return;}
+    if(action==='portal-note-expand'){const memo=button.closest('.ph-memo'),open=!memo.classList.contains('expanded');collapseMemos(memo);setMemoExpanded(memo,open);return;}
     if(action==='portal-cal'){await renderPortalCalendar(Number(button.dataset.step));return;}
     if(action==='portal-cal-day'){portalCal.selected=button.dataset.date;await renderPortalCalendar();document.querySelector('#portal-event-form input[name=title]')?.focus({preventScroll:true});return;}
     if(action==='portal-event-delete'){await api('/calendar-events/'+Number(id),{method:'DELETE'});await reloadPortalEvents();toast('일정을 삭제했습니다.');return;}

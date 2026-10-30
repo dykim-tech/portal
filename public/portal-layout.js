@@ -124,11 +124,13 @@ export function portalCalendarHtml({ year, month, holidays = [], events = [], to
 // 예전에 만든 3·4번째 메모에 내용이 남아 있으면 함께 보여 주고 × 버튼으로 지울 수 있게 한다.
 export function portalNotesHtml({ notes, max = 2, limit = 5000 }) {
   // 메모장은 2장만 보인다. 3·4번째는 내용이 남아 있을 때만(지울 수 있게) 보여 준다.
-  const cards = notes.filter((note, index) => index < max || note.body.trim()).map((note, index) => `<article class="ph-memo ph-memo-${index % 4}" data-note-id="${Number(note.id)}">
+  // 각 메모는 칸(.ph-memo-slot) 안에 놓여, ＋를 눌러 펼치면 칸 크기는 그대로 둔 채 아래로 늘어나 전체 내용을 보여 준다.
+  const cards = notes.filter((note, index) => index < max || note.body.trim()).map((note, index) => `<div class="ph-memo-slot"><article class="ph-memo ph-memo-${index % 4}" data-note-id="${Number(note.id)}">
       <span class="ph-memo-pin" aria-hidden="true"></span>
+      <button type="button" class="ph-memo-expand" data-action="portal-note-expand" data-id="${Number(note.id)}" aria-expanded="false" aria-label="메모 ${index + 1} 전체 보기" title="전체 보기 (메모 밖을 누르면 원래 크기로)">+</button>
       <textarea class="ph-memo-body" data-note-body="${Number(note.id)}" maxlength="${limit}" spellcheck="false" placeholder="간단히 메모하세요.&#10;쓰는 대로 자동 저장됩니다." aria-label="메모 ${index + 1}">${esc(note.body)}</textarea>
       <div class="ph-memo-foot"><span class="ph-memo-status" data-note-status="${Number(note.id)}" role="status" aria-live="polite">${note.updated_at ? '저장됨 · ' + esc(noteTime(note.updated_at)) : '자동 저장'}</span>${index >= max ? `<button type="button" class="ph-memo-delete" data-action="portal-note-delete" data-id="${Number(note.id)}" title="예전에 만든 메모 삭제" aria-label="메모 ${index + 1} 삭제">×</button>` : ''}</div>
-    </article>`).join('');
+    </article></div>`).join('');
   return `<div class="ph-memo-grid">${cards}</div>`;
 }
 export function noteTime(iso) { return new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(iso)); }
