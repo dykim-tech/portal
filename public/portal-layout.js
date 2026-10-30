@@ -69,9 +69,9 @@ export function portalHeroHtml({ user, d, names, shown, chips = [] }) {
         <p class="ph-lead">${esc(user.name)}님, 오늘은 ${esc(today)}입니다. 미완료 할 일 <b>${d.openTodoCount}건</b>, 읽지 않은 알림 <b>${d.counts.unread}건</b>이 있습니다.</p>
         <form class="ph-search" id="portal-search" role="search"><input name="q" maxlength="100" placeholder="포털 전체(기록 내용·자료·첨부 파일 이름)에서 찾아보세요" aria-label="포털 통합 검색"><button type="submit">검색 ${portalIcon('search', 20)}</button></form>
         <p class="ph-search-msg" id="portal-search-msg" role="status" aria-live="polite" hidden></p>
-        ${chipHtml ? `<div class="ph-chips"><span>자주 쓰는 메뉴</span>${chipHtml}</div>` : ''}</div>
+        ${chipHtml ? `<div class="ph-chips"><span>자주 쓰는 메뉴</span>${chipHtml}</div>` : ''}
+        <section class="ph-memos" id="portal-notes" aria-label="메모 (빈 곳을 마우스 오른쪽 버튼으로 누르면 추가, 최대 4장)"></section></div>
       <aside class="ph-calendar" id="portal-calendar" aria-label="달력"><p class="muted">달력을 불러오는 중입니다.</p></aside>
-      <aside class="ph-note" id="portal-note" aria-label="메모"><p class="muted">메모를 불러오는 중입니다.</p></aside>
     </div></section>
     <section class="ph-results" id="portal-search-results" hidden></section>
     ${tileHtml ? `<section class="ph-section"><div class="ph-section-head"><h2>자주 찾는 메뉴</h2><p>메뉴를 누르면 해당 화면으로 이동합니다.</p></div><div class="ph-tiles">${tileHtml}</div></section>` : ''}
@@ -119,11 +119,16 @@ export function portalCalendarHtml({ year, month, holidays = [], events = [], to
     <p class="ph-cal-source">${error ? `<span class="ph-cal-error">${esc(error)}</span> ` : ''}${source ? `공휴일 출처: ${esc(source)}${updated ? ` (${esc(updated)} 받음)` : ''}` : ''}</p>`;
 }
 
-// 메모 스티커(TO-DO List 스티커 메모 모양): 사용자마다 한 장, 글을 쓰면 자동 저장(app.js renderPortalNote).
-export function portalNoteHtml({ note, max = 5000 }) {
-  return `<div class="ph-note-top"><strong>메모</strong><span class="ph-note-count" id="portal-note-count">${note.body.length.toLocaleString('ko-KR')} / ${max.toLocaleString('ko-KR')}</span></div>
-    <textarea class="ph-note-body" id="portal-note-body" maxlength="${max}" spellcheck="false" placeholder="여기에 간단히 메모하세요. 쓰는 대로 자동 저장됩니다." aria-label="메모 내용">${esc(note.body)}</textarea>
-    <div class="ph-note-bottom"><span class="ph-note-status" id="portal-note-status" role="status" aria-live="polite">${note.updated_at ? '저장됨 · ' + esc(noteTime(note.updated_at)) : '아직 저장한 메모가 없습니다'}</span><button type="button" data-view="todos">TO-DO List →</button></div>`;
+// 첫 화면 메모(2026-10-30 개편): 검색창 아래에 스티커 메모를 최대 4장 가로로 붙인다. 기본 1장, 빈 곳을 오른쪽 클릭하면 1장씩 추가.
+// 평소에는 보드에 핀으로 꽂힌 것처럼 살짝 기울어져 있고, 마우스를 올리거나 글을 쓰는 동안에는 반듯하게 떠오른다.
+export function portalNotesHtml({ notes, max = 4, limit = 5000 }) {
+  const cards = notes.map((note, index) => `<article class="ph-memo ph-memo-${index % 4}" data-note-id="${Number(note.id)}">
+      <span class="ph-memo-pin" aria-hidden="true"></span>
+      <textarea class="ph-memo-body" data-note-body="${Number(note.id)}" maxlength="${limit}" spellcheck="false" placeholder="간단히 메모하세요.&#10;쓰는 대로 자동 저장됩니다." aria-label="메모 ${index + 1}">${esc(note.body)}</textarea>
+      <div class="ph-memo-foot"><span class="ph-memo-status" data-note-status="${Number(note.id)}" role="status" aria-live="polite">${note.updated_at ? '저장됨 · ' + esc(noteTime(note.updated_at)) : '자동 저장'}</span>${notes.length > 1 ? `<button type="button" class="ph-memo-delete" data-action="portal-note-delete" data-id="${Number(note.id)}" title="이 메모 삭제" aria-label="메모 ${index + 1} 삭제">×</button>` : ''}</div>
+    </article>`).join('');
+  const add = notes.length < max ? `<button type="button" class="ph-memo-add" data-action="portal-note-add" title="마우스 오른쪽 버튼으로 눌러도 추가됩니다">+ 메모 추가<small>오른쪽 클릭 · ${notes.length}/${max}</small></button>` : '';
+  return `<div class="ph-memo-grid">${cards}${add}</div>`;
 }
 export function noteTime(iso) { return new Intl.DateTimeFormat('ko-KR', { timeZone: 'Asia/Seoul', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(new Date(iso)); }
 
